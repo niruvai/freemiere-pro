@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data: blob:; media-src 'self' file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Frameline</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- Title bar -->
+  <header id="titlebar">
+    <div class="brand"><span class="logo"></span>Frameline</div>
+    <div id="docname">Untitled</div>
+    <div class="titlebar-actions">
+      <button class="btn" id="btn-import" title="Import media (⌘I)"><i class="ic ic-import"></i>Import</button>
+      <button class="btn" id="btn-title" title="New title (⌘T)"><i class="ic ic-text"></i>Title</button>
+      <button class="btn primary" id="btn-export" title="Export video (⌘M)"><i class="ic ic-export"></i>Export</button>
+    </div>
+  </header>
+
+  <main id="workspace">
+    <!-- Project panel -->
+    <section class="panel" id="panel-project">
+      <div class="panel-head">
+        <span class="panel-title">Project</span>
+        <span class="panel-sub" id="media-count">0 items</span>
+      </div>
+      <div class="bin-search"><input id="bin-filter" type="search" placeholder="Search media"></div>
+      <div id="bin" class="bin">
+        <div class="bin-empty" id="bin-empty">
+          <div class="bin-empty-icon"></div>
+          <p>Drop video, audio or images here</p>
+          <button class="btn" id="btn-import-2">Import Media…</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="splitter v" data-split="left"></div>
+
+    <!-- Program monitor -->
+    <section class="panel" id="panel-monitor">
+      <div class="panel-head">
+        <span class="panel-title">Program</span>
+        <span class="panel-sub" id="seq-info">1920×1080 · 30 fps</span>
+        <span class="spacer"></span>
+        <select id="preview-quality" class="mini-select" title="Playback resolution">
+          <option value="1">Full</option>
+          <option value="0.5">1/2</option>
+          <option value="0.25">1/4</option>
+        </select>
+      </div>
+      <div id="monitor">
+        <div id="stage"><canvas id="canvas"></canvas></div>
+      </div>
+      <div id="transport">
+        <div class="tc" id="tc-current" title="Current time">00:00:00:00</div>
+        <div class="transport-buttons">
+          <button class="tbtn" id="t-start" title="Go to start (Home)"><i class="ic ic-start"></i></button>
+          <button class="tbtn" id="t-prev" title="Previous edit (↑)"><i class="ic ic-prev-edit"></i></button>
+          <button class="tbtn" id="t-back" title="Back one frame (←)"><i class="ic ic-frame-back"></i></button>
+          <button class="tbtn play" id="t-play" title="Play / Pause (Space)"><i class="ic ic-play"></i></button>
+          <button class="tbtn" id="t-fwd" title="Forward one frame (→)"><i class="ic ic-frame-fwd"></i></button>
+          <button class="tbtn" id="t-next" title="Next edit (↓)"><i class="ic ic-next-edit"></i></button>
+          <button class="tbtn" id="t-end" title="Go to end (End)"><i class="ic ic-end"></i></button>
+        </div>
+        <div class="tc dim" id="tc-duration" title="Sequence duration">00:00:00:00</div>
+      </div>
+    </section>
+
+    <div class="splitter v" data-split="right"></div>
+
+    <!-- Inspector -->
+    <section class="panel" id="panel-inspector">
+      <div class="panel-head"><span class="panel-title" id="inspector-title">Effect Controls</span></div>
+      <div id="inspector"></div>
+    </section>
+  </main>
+
+  <div class="splitter h" data-split="timeline"></div>
+
+  <!-- Timeline -->
+  <section class="panel" id="panel-timeline">
+    <div id="timeline-toolbar">
+      <div class="tool-group">
+        <button class="tool active" data-tool="select" title="Selection tool (V)"><i class="ic ic-arrow"></i></button>
+        <button class="tool" data-tool="razor" title="Razor tool (C)"><i class="ic ic-razor"></i></button>
+      </div>
+      <div class="tool-group">
+        <button class="tool toggle active" id="snap-toggle" title="Snap (N)"><i class="ic ic-magnet"></i></button>
+      </div>
+      <div class="tool-group">
+        <button class="btn small" id="add-vtrack" title="Add video track">+ Video Track</button>
+        <button class="btn small" id="add-atrack" title="Add audio track">+ Audio Track</button>
+      </div>
+      <span class="spacer"></span>
+      <div class="zoom">
+        <button class="tool" id="zoom-out" title="Zoom out (−)"><i class="ic ic-minus"></i></button>
+        <input type="range" id="zoom" min="0" max="1000" value="500">
+        <button class="tool" id="zoom-in" title="Zoom in (=)"><i class="ic ic-plus"></i></button>
+        <button class="btn small" id="zoom-fit" title="Zoom to fit (Shift+Z)">Fit</button>
+      </div>
+    </div>
+    <div id="timeline-scroll">
+      <div id="timeline">
+        <div id="ruler-row">
+          <div class="corner"></div>
+          <canvas id="ruler"></canvas>
+        </div>
+        <div id="tracks"></div>
+        <div id="playhead"><div class="ph-head"></div></div>
+        <div id="snap-line"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- Export dialog -->
+<div class="modal-backdrop" id="export-modal" hidden>
+  <div class="modal">
+    <div class="modal-head"><h2>Export Video</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body" id="export-form">
+      <label class="field"><span>File</span>
+        <div class="file-pick"><input type="text" id="ex-path" readonly placeholder="Choose where to save…"><button class="btn" id="ex-browse">Choose…</button></div>
+      </label>
+      <div class="row2">
+        <label class="field"><span>Resolution</span><select id="ex-res"></select></label>
+        <label class="field"><span>Frame rate</span><select id="ex-fps"></select></label>
+      </div>
+      <div class="row2">
+        <label class="field"><span>Quality</span>
+          <select id="ex-quality">
+            <option value="high">High (larger file)</option>
+            <option value="standard" selected>Standard</option>
+            <option value="draft">Draft (fast)</option>
+          </select>
+        </label>
+        <label class="field"><span>Format</span><select disabled><option>H.264 + AAC</option></select></label>
+      </div>
+      <div class="ex-summary" id="ex-summary"></div>
+    </div>
+    <div class="modal-body" id="export-progress" hidden>
+      <div class="progress"><div class="bar" id="ex-bar"></div></div>
+      <div class="progress-meta"><span id="ex-pct">0%</span><span id="ex-eta"></span></div>
+      <div class="ex-result" id="ex-result"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="ex-cancel">Cancel</button>
+      <button class="btn primary" id="ex-start">Export</button>
+    </div>
+  </div>
+</div>
+
+<!-- Shortcuts dialog -->
+<div class="modal-backdrop" id="shortcuts-modal" hidden>
+  <div class="modal wide">
+    <div class="modal-head"><h2>Keyboard Shortcuts</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body shortcuts" id="shortcuts-list"></div>
+  </div>
+</div>
+
+<div id="context-menu" hidden></div>
+<div id="toast" hidden></div>
+<div id="drop-overlay" hidden><div>Drop to import</div></div>
+
+<script src="js/core.js"></script>
+<script src="js/text.js"></script>
+<script src="js/preview.js"></script>
+<script src="js/timeline.js"></script>
+<script src="js/inspector.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
