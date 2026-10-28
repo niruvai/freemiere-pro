@@ -2,14 +2,50 @@
 // Window, native menus, file dialogs, and every FFmpeg job (probe, thumbnails,
 // waveforms, preview proxies, final export) live here.
 
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, protocol } = require('electron');
+const { Readable } = require('stream');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { buildExportArgs, projectDuration } = require('./export');
+const { buildExportArgs } = require('./export');
 
 nativeTheme.themeSource = 'dark';
+
+// ---------- flmedia:// — serves imported media to the editor with byte ranges and CORS,
+// so video seeks, Web Audio and canvas read-back (chroma key, export frame) all work.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'flmedia', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true, bypassCSP: true } },
+]);
+const allowedMedia = new Set();
+const MIME = {
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', mkv: 'video/x-matroska',
+  mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac', ogg: 'audio/ogg', opus: 'audio/ogg',
+  aif: 'audio/aiff', aiff: 'audio/aiff', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', bmp: 'image/bmp', gif: 'image/gif',
+};
+function serveMedia(req) {
+  const file = decodeURIComponent(new URL(req.url).pathname.slice(1));
+  if (!allowedMedia.has(file) || !fs.existsSync(file)) return new Response('Not found', { status: 404 });
+  const size = fs.statSync(file).size;
+  const headers = {
+    'Content-Type': MIME[path.extname(file).slice(1).toLowerCase()] || 'application/octet-stream',
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': '*',
+  };
+  const range = req.headers.get('range');
+  const m = range && /bytes=(\d*)-(\d*)/.exec(range);
+  if (m && (m[1] || m[2])) {
+    let start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+    let end = m[1] && m[2] ? Number(m[2]) : size - 1;
+    end = Math.min(end, size - 1);
+    if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
+    headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+    headers['Content-Length'] = String(end - start + 1);
+    return new Response(Readable.toWeb(fs.createReadStream(file, { start, end })), { status: 206, headers });
+  }
+  headers['Content-Length'] = String(size);
+  return new Response(Readable.toWeb(fs.createReadStream(file)), { status: 200, headers });
+}
 
 // ---------- FFmpeg binaries ----------
 function unpacked(p) {
@@ -140,6 +176,11 @@ async function proxy(file, type) {
   fs.renameSync(tmp, out);
   return out;
 }
+async function proxyAllowed(file, type) {
+  const out = await proxy(file, type);
+  allowedMedia.add(out);
+  return out;
+}
 
 // ---------- Window ----------
 let win = null;
@@ -163,6 +204,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false,
       backgroundThrottling: false,
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -221,20 +263,24 @@ async function openProjectFile(file) {
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const cmd = (name) => () => send('menu', name);
+  // Single-key shortcuts are shown in menus but handled by the editor, so they never steal typing.
+  const show = (accelerator) => ({ accelerator, registerAccelerator: false });
   const template = [
     ...(isMac ? [{ role: 'appMenu' }] : []),
     {
       label: 'File',
       submenu: [
-        { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: cmd('new') },
+        { label: 'New Project', accelerator: 'Alt+CmdOrCtrl+N', click: cmd('new') },
+        { label: 'New Sequence', accelerator: 'CmdOrCtrl+N', click: cmd('newSequence') },
         { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: cmd('open') },
         { role: 'recentDocuments', submenu: [{ role: 'clearRecentDocuments' }] },
         { type: 'separator' },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: cmd('save') },
         { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: cmd('saveAs') },
         { type: 'separator' },
-        { label: 'Import Media…', accelerator: 'CmdOrCtrl+I', click: cmd('import') },
-        { label: 'Export Video…', accelerator: 'CmdOrCtrl+M', click: cmd('export') },
+        { label: 'Import…', accelerator: 'CmdOrCtrl+I', click: cmd('import') },
+        { label: 'Export Media…', accelerator: 'CmdOrCtrl+M', click: cmd('export') },
+        { label: 'Export Frame…', accelerator: 'Shift+CmdOrCtrl+E', click: cmd('exportFrame') },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
       ],
     },
@@ -247,35 +293,70 @@ function buildMenu() {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
-        { label: 'Duplicate Clip', accelerator: 'CmdOrCtrl+D', click: cmd('duplicate') },
-        { role: 'selectAll' },
+        { label: 'Paste Attributes', accelerator: 'Alt+CmdOrCtrl+V', click: cmd('pasteAttributes') },
+        { label: 'Duplicate', accelerator: 'Alt+CmdOrCtrl+D', click: cmd('duplicate') },
+        { label: 'Clear', ...show('Backspace'), click: cmd('delete') },
+        { label: 'Ripple Delete', ...show('Shift+Backspace'), click: cmd('rippleDelete') },
+        { type: 'separator' },
+        { label: 'Select All', accelerator: 'CmdOrCtrl+A', click: cmd('selectAll') },
+        { label: 'Deselect All', accelerator: 'Shift+CmdOrCtrl+A', click: cmd('deselect') },
       ],
     },
     {
       label: 'Clip',
       submenu: [
-        { label: 'Split at Playhead', accelerator: 'CmdOrCtrl+K', click: cmd('split') },
-        { label: 'Ripple Delete', accelerator: 'Shift+Backspace', registerAccelerator: false, click: cmd('rippleDelete') },
-        { label: 'Detach Audio', accelerator: 'CmdOrCtrl+L', click: cmd('detachAudio') },
+        { label: 'Add Edit', accelerator: 'CmdOrCtrl+K', click: cmd('split') },
+        { label: 'Add Edit to All Tracks', accelerator: 'Shift+CmdOrCtrl+K', click: cmd('splitAll') },
+        { label: 'Ripple Trim Previous Edit to Playhead', ...show('Q'), click: cmd('rippleTrimPrev') },
+        { label: 'Ripple Trim Next Edit to Playhead', ...show('W'), click: cmd('rippleTrimNext') },
         { type: 'separator' },
-        { label: 'New Title', accelerator: 'CmdOrCtrl+T', click: cmd('title') },
+        { label: 'Apply Video Transition', accelerator: 'CmdOrCtrl+D', click: cmd('applyVideoTransition') },
+        { label: 'Apply Audio Transition', accelerator: 'Shift+CmdOrCtrl+D', click: cmd('applyAudioTransition') },
+        { type: 'separator' },
+        { label: 'Detach Audio', accelerator: 'CmdOrCtrl+L', click: cmd('detachAudio') },
+        { label: 'Enable / Disable Effects', accelerator: 'Shift+E', registerAccelerator: false, click: cmd('toggleFx') },
+        { label: 'Scale to Frame Size', click: cmd('fill') },
       ],
     },
     {
       label: 'Sequence',
       submenu: [
+        { label: 'Sequence Settings…', click: cmd('settings') },
+        { type: 'separator' },
+        { label: 'Mark In', ...show('I'), click: cmd('markIn') },
+        { label: 'Mark Out', ...show('O'), click: cmd('markOut') },
+        { label: 'Clear In and Out', ...show('Alt+X'), click: cmd('clearInOut') },
+        { type: 'separator' },
+        { label: 'Add Marker', ...show('M'), click: cmd('addMarker') },
+        { label: 'Go to Next Marker', ...show('Shift+M'), click: cmd('nextMarker') },
+        { label: 'Go to Previous Marker', ...show('Alt+Shift+M'), click: cmd('prevMarker') },
+        { type: 'separator' },
+        { label: 'Snap in Timeline', ...show('S'), click: cmd('toggleSnap') },
         { label: 'Add Video Track', click: cmd('addVideoTrack') },
         { label: 'Add Audio Track', click: cmd('addAudioTrack') },
+      ],
+    },
+    {
+      label: 'Graphics',
+      submenu: [
+        { label: 'New Title', accelerator: 'CmdOrCtrl+T', click: cmd('title') },
+        { label: 'New Adjustment Layer', click: cmd('adjustLayer') },
+        { label: 'New Color Matte', click: cmd('colorMatte') },
         { type: 'separator' },
-        { label: 'Sequence Settings…', click: cmd('settings') },
+        { label: 'News Headline Bar', click: cmd('gfx:headline') },
+        { label: 'Scrolling Ticker', click: cmd('gfx:ticker') },
+        { label: 'Lower Third', click: cmd('gfx:lowerthird') },
+        { label: 'Breaking News', click: cmd('gfx:breaking') },
+        { label: 'Live Bug', click: cmd('gfx:live') },
+        { label: 'Caption Box', click: cmd('gfx:caption') },
       ],
     },
     {
       label: 'View',
       submenu: [
-        { label: 'Zoom Timeline In', accelerator: 'CmdOrCtrl+=', click: cmd('zoomIn') },
-        { label: 'Zoom Timeline Out', accelerator: 'CmdOrCtrl+-', click: cmd('zoomOut') },
-        { label: 'Zoom to Fit', accelerator: 'Shift+Z', registerAccelerator: false, click: cmd('zoomFit') },
+        { label: 'Zoom Timeline In', ...show('='), click: cmd('zoomIn') },
+        { label: 'Zoom Timeline Out', ...show('-'), click: cmd('zoomOut') },
+        { label: 'Zoom to Sequence', ...show('\\'), click: cmd('zoomFit') },
         { type: 'separator' },
         { role: 'reload' },
         { role: 'toggleDevTools' },
@@ -283,7 +364,19 @@ function buildMenu() {
         { role: 'togglefullscreen' },
       ],
     },
-    { role: 'windowMenu' },
+    {
+      label: 'Window',
+      submenu: [
+        { label: 'Project', accelerator: 'Shift+1', registerAccelerator: false, click: cmd('panel:project') },
+        { label: 'Effects', accelerator: 'Shift+7', registerAccelerator: false, click: cmd('panel:effects') },
+        { label: 'Essential Graphics', click: cmd('panel:graphics') },
+        { label: 'Source Monitor', accelerator: 'Shift+2', registerAccelerator: false, click: cmd('panel:source') },
+        { label: 'Program Monitor', accelerator: 'Shift+4', registerAccelerator: false, click: cmd('panel:program') },
+        { type: 'separator' },
+        { role: 'minimize' },
+        { role: 'zoom' },
+      ],
+    },
     {
       role: 'help',
       submenu: [{ label: 'Keyboard Shortcuts', click: cmd('shortcuts') }],
@@ -307,7 +400,19 @@ ipcMain.handle('media:pick', async () => {
 ipcMain.handle('media:probe', (_e, file) => probe(file));
 ipcMain.handle('media:thumb', (_e, file, type, duration) => thumbnail(file, type, duration));
 ipcMain.handle('media:wave', (_e, file) => waveform(file));
-ipcMain.handle('media:proxy', (_e, file, type) => proxy(file, type));
+ipcMain.handle('media:proxy', (_e, file, type) => proxyAllowed(file, type));
+ipcMain.handle('media:allow', (_e, files) => { for (const f of files || []) if (f) allowedMedia.add(f); return true; });
+ipcMain.handle('frame:save', async (_e, dataUrl, name) => {
+  const res = await dialog.showSaveDialog(win, {
+    title: 'Export Frame',
+    defaultPath: path.join(app.getPath('pictures'), name || 'Frame.png'),
+    filters: [{ name: 'PNG Image', extensions: ['png'] }],
+  });
+  if (res.canceled || !res.filePath) return null;
+  fs.writeFileSync(res.filePath, Buffer.from(dataUrl.split(',')[1], 'base64'));
+  allowedMedia.add(res.filePath);
+  return res.filePath;
+});
 ipcMain.handle('fs:exists', (_e, file) => fs.existsSync(file));
 
 ipcMain.handle('project:save', async (_e, data, filePath) => {
@@ -369,14 +474,21 @@ let exportChild = null;
 let exportCancelled = false;
 ipcMain.handle('export:start', async (_e, job) => {
   const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'frameline-export-'));
-  const textImages = {};
-  for (const [clipId, dataUrl] of Object.entries(job.textImages || {})) {
-    const file = path.join(tmp, `text-${clipId}.png`);
+  const images = {};
+  let n = 0;
+  for (const [key, dataUrl] of Object.entries(job.images || {})) {
+    const file = path.join(tmp, `asset-${n++}.png`);
     fs.writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
-    textImages[clipId] = file;
+    images[key] = file;
   }
-  const total = projectDuration(job.project);
-  const args = buildExportArgs(job.project, job.options, textImages, job.outPath);
+  let built;
+  try {
+    built = buildExportArgs(job.project, Object.assign({ seqId: job.seqId }, job.options), { images, meta: job.meta || {} }, job.outPath, tmp);
+  } catch (err) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    return { ok: false, error: 'Could not prepare export: ' + (err.message || err) };
+  }
+  const { args, total } = built;
   exportCancelled = false;
   const started = Date.now();
   try {
@@ -428,6 +540,7 @@ app.on('open-file', (e, file) => {
 });
 
 app.whenReady().then(() => {
+  protocol.handle('flmedia', serveMedia);
   buildMenu();
   createWindow();
   app.on('activate', () => { if (!win) createWindow(); });

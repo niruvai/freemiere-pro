@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data: blob:; media-src 'self' file: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data: blob: flmedia:; media-src 'self' file: blob: flmedia:; connect-src 'self' flmedia:; style-src 'self' 'unsafe-inline'; script-src 'self'">
 <title>Frameline</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -14,65 +14,112 @@
     <div id="docname">Untitled</div>
     <div class="titlebar-actions">
       <button class="btn" id="btn-import" title="Import media (⌘I)"><i class="ic ic-import"></i>Import</button>
-      <button class="btn" id="btn-title" title="New title (⌘T)"><i class="ic ic-text"></i>Title</button>
-      <button class="btn primary" id="btn-export" title="Export video (⌘M)"><i class="ic ic-export"></i>Export</button>
+      <button class="btn primary" id="btn-export" title="Export media (⌘M)"><i class="ic ic-export"></i>Export</button>
     </div>
   </header>
 
   <main id="workspace">
-    <!-- Project panel -->
-    <section class="panel" id="panel-project">
-      <div class="panel-head">
-        <span class="panel-title">Project</span>
-        <span class="panel-sub" id="media-count">0 items</span>
+    <!-- Left: Project / Effects / Essential Graphics -->
+    <section class="panel" id="panel-left">
+      <div class="tabs" data-group="left">
+        <button class="tab active" data-tab="project">Project</button>
+        <button class="tab" data-tab="effects">Effects</button>
+        <button class="tab" data-tab="graphics">Essential Graphics</button>
       </div>
-      <div class="bin-search"><input id="bin-filter" type="search" placeholder="Search media"></div>
-      <div id="bin" class="bin">
-        <div class="bin-empty" id="bin-empty">
-          <div class="bin-empty-icon"></div>
-          <p>Drop video, audio or images here</p>
-          <button class="btn" id="btn-import-2">Import Media…</button>
+      <div class="tab-page" data-page="project">
+        <div class="bin-search">
+          <input id="bin-filter" type="search" placeholder="Search media">
+          <button class="btn small" id="btn-new-item" title="New item">New Item ▾</button>
         </div>
+        <div id="bin" class="bin">
+          <div class="bin-empty" id="bin-empty">
+            <div class="bin-empty-icon"></div>
+            <p>Drop video, audio or images here</p>
+            <button class="btn" id="btn-import-2">Import Media…</button>
+          </div>
+        </div>
+        <div class="panel-foot"><span id="media-count">0 items</span></div>
+      </div>
+      <div class="tab-page" data-page="effects" hidden>
+        <div class="bin-search"><input id="fx-filter" type="search" placeholder="Search effects & transitions"></div>
+        <div id="fx-tree" class="fx-tree"></div>
+        <div class="panel-foot hint">Drag onto a clip, or double-click to apply to the selected clips</div>
+      </div>
+      <div class="tab-page" data-page="graphics" hidden>
+        <div id="gfx-list" class="gfx-list"></div>
+        <div class="panel-foot hint">Drag onto the timeline or double-click to add at the playhead</div>
       </div>
     </section>
 
     <div class="splitter v" data-split="left"></div>
 
-    <!-- Program monitor -->
+    <!-- Center: Program / Source -->
     <section class="panel" id="panel-monitor">
-      <div class="panel-head">
-        <span class="panel-title">Program</span>
-        <span class="panel-sub" id="seq-info">1920×1080 · 30 fps</span>
+      <div class="tabs" data-group="monitor">
+        <button class="tab active" data-tab="program">Program: <span id="prog-seq-name">Sequence 01</span></button>
+        <button class="tab" data-tab="source">Source: <span id="src-name">(no clip)</span></button>
         <span class="spacer"></span>
+        <span class="panel-sub" id="seq-info">1920×1080 · 30 fps</span>
         <select id="preview-quality" class="mini-select" title="Playback resolution">
           <option value="1">Full</option>
           <option value="0.5">1/2</option>
           <option value="0.25">1/4</option>
         </select>
       </div>
-      <div id="monitor">
-        <div id="stage"><canvas id="canvas"></canvas></div>
-      </div>
-      <div id="transport">
-        <div class="tc" id="tc-current" title="Current time">00:00:00:00</div>
-        <div class="transport-buttons">
-          <button class="tbtn" id="t-start" title="Go to start (Home)"><i class="ic ic-start"></i></button>
-          <button class="tbtn" id="t-prev" title="Previous edit (↑)"><i class="ic ic-prev-edit"></i></button>
-          <button class="tbtn" id="t-back" title="Back one frame (←)"><i class="ic ic-frame-back"></i></button>
-          <button class="tbtn play" id="t-play" title="Play / Pause (Space)"><i class="ic ic-play"></i></button>
-          <button class="tbtn" id="t-fwd" title="Forward one frame (→)"><i class="ic ic-frame-fwd"></i></button>
-          <button class="tbtn" id="t-next" title="Next edit (↓)"><i class="ic ic-next-edit"></i></button>
-          <button class="tbtn" id="t-end" title="Go to end (End)"><i class="ic ic-end"></i></button>
+      <div class="tab-page monitor-page" data-page="program">
+        <div id="monitor">
+          <div id="stage"><canvas id="canvas"></canvas></div>
         </div>
-        <div class="tc dim" id="tc-duration" title="Sequence duration">00:00:00:00</div>
+        <div class="mini-ruler" id="prog-bar"><div class="mr-range" id="prog-range"></div><div class="mr-head" id="prog-head"></div></div>
+        <div class="transport">
+          <div class="tc" id="tc-current" title="Playhead position">00:00:00:00</div>
+          <div class="transport-buttons">
+            <button class="tbtn" id="t-marker" title="Add marker (M)"><i class="ic ic-marker"></i></button>
+            <button class="tbtn" id="t-in" title="Mark in (I)"><i class="ic ic-mark-in"></i></button>
+            <button class="tbtn" id="t-out" title="Mark out (O)"><i class="ic ic-mark-out"></i></button>
+            <span class="tsep"></span>
+            <button class="tbtn" id="t-prev" title="Go to previous edit (↑)"><i class="ic ic-prev-edit"></i></button>
+            <button class="tbtn" id="t-back" title="Step back one frame (←)"><i class="ic ic-frame-back"></i></button>
+            <button class="tbtn play" id="t-play" title="Play / Stop (Space)"><i class="ic ic-play"></i></button>
+            <button class="tbtn" id="t-fwd" title="Step forward one frame (→)"><i class="ic ic-frame-fwd"></i></button>
+            <button class="tbtn" id="t-next" title="Go to next edit (↓)"><i class="ic ic-next-edit"></i></button>
+            <span class="tsep"></span>
+            <button class="tbtn" id="t-lift" title="Lift in/out range (;)"><i class="ic ic-lift"></i></button>
+            <button class="tbtn" id="t-extract" title="Extract in/out range (')"><i class="ic ic-extract"></i></button>
+            <button class="tbtn" id="t-frame" title="Export frame (⇧⌘E)"><i class="ic ic-camera"></i></button>
+          </div>
+          <div class="tc dim" id="tc-duration" title="Sequence duration (or in/out duration)">00:00:00:00</div>
+        </div>
+      </div>
+      <div class="tab-page monitor-page" data-page="source" hidden>
+        <div id="src-monitor">
+          <video id="src-video" playsinline></video>
+          <div class="src-empty" id="src-empty">Double-click a clip in the Project panel to open it here</div>
+        </div>
+        <div class="mini-ruler" id="src-bar"><div class="mr-range" id="src-range"></div><div class="mr-head" id="src-head"></div></div>
+        <div class="transport">
+          <div class="tc" id="src-tc">00:00:00:00</div>
+          <div class="transport-buttons">
+            <button class="tbtn" id="s-in" title="Mark in (I)"><i class="ic ic-mark-in"></i></button>
+            <button class="tbtn" id="s-out" title="Mark out (O)"><i class="ic ic-mark-out"></i></button>
+            <span class="tsep"></span>
+            <button class="tbtn" id="s-back" title="Step back"><i class="ic ic-frame-back"></i></button>
+            <button class="tbtn play" id="s-play" title="Play / Stop (Space)"><i class="ic ic-play"></i></button>
+            <button class="tbtn" id="s-fwd" title="Step forward"><i class="ic ic-frame-fwd"></i></button>
+            <span class="tsep"></span>
+            <button class="tbtn" id="s-insert" title="Insert (,)"><i class="ic ic-insert"></i></button>
+            <button class="tbtn" id="s-overwrite" title="Overwrite (.)"><i class="ic ic-overwrite"></i></button>
+          </div>
+          <div class="tc dim" id="src-dur">00:00:00:00</div>
+        </div>
       </div>
     </section>
 
     <div class="splitter v" data-split="right"></div>
 
-    <!-- Inspector -->
+    <!-- Right: Effect Controls -->
     <section class="panel" id="panel-inspector">
-      <div class="panel-head"><span class="panel-title" id="inspector-title">Effect Controls</span></div>
+      <div class="tabs"><button class="tab active" id="inspector-title">Effect Controls</button></div>
       <div id="inspector"></div>
     </section>
   </main>
@@ -81,36 +128,48 @@
 
   <!-- Timeline -->
   <section class="panel" id="panel-timeline">
+    <div id="seq-tabs"></div>
     <div id="timeline-toolbar">
-      <div class="tool-group">
-        <button class="tool active" data-tool="select" title="Selection tool (V)"><i class="ic ic-arrow"></i></button>
-        <button class="tool" data-tool="razor" title="Razor tool (C)"><i class="ic ic-razor"></i></button>
+      <div class="tc small" id="tl-tc">00:00:00:00</div>
+      <div class="tool-group" id="tools">
+        <button class="tool active" data-tool="select" title="Selection Tool (V)"><i class="ic ic-arrow"></i></button>
+        <button class="tool" data-tool="trackfwd" title="Track Select Forward Tool (A)"><i class="ic ic-trackfwd"></i></button>
+        <button class="tool" data-tool="ripple" title="Ripple Edit Tool (B)"><i class="ic ic-ripple"></i></button>
+        <button class="tool" data-tool="rolling" title="Rolling Edit Tool (N)"><i class="ic ic-rolling"></i></button>
+        <button class="tool" data-tool="rate" title="Rate Stretch Tool (R)"><i class="ic ic-rate"></i></button>
+        <button class="tool" data-tool="razor" title="Razor Tool (C)"><i class="ic ic-razor"></i></button>
+        <button class="tool" data-tool="slip" title="Slip Tool (Y)"><i class="ic ic-slip"></i></button>
       </div>
       <div class="tool-group">
-        <button class="tool toggle active" id="snap-toggle" title="Snap (N)"><i class="ic ic-magnet"></i></button>
+        <button class="tool toggle active" id="snap-toggle" title="Snap in Timeline (S)"><i class="ic ic-magnet"></i></button>
+        <button class="tool" id="tl-marker" title="Add Marker (M)"><i class="ic ic-marker"></i></button>
       </div>
       <div class="tool-group">
-        <button class="btn small" id="add-vtrack" title="Add video track">+ Video Track</button>
-        <button class="btn small" id="add-atrack" title="Add audio track">+ Audio Track</button>
+        <button class="btn small" id="add-vtrack" title="Add video track">+ Video</button>
+        <button class="btn small" id="add-atrack" title="Add audio track">+ Audio</button>
       </div>
       <span class="spacer"></span>
       <div class="zoom">
         <button class="tool" id="zoom-out" title="Zoom out (−)"><i class="ic ic-minus"></i></button>
         <input type="range" id="zoom" min="0" max="1000" value="500">
         <button class="tool" id="zoom-in" title="Zoom in (=)"><i class="ic ic-plus"></i></button>
-        <button class="btn small" id="zoom-fit" title="Zoom to fit (Shift+Z)">Fit</button>
+        <button class="btn small" id="zoom-fit" title="Zoom to sequence (\)">Fit</button>
       </div>
     </div>
-    <div id="timeline-scroll">
-      <div id="timeline">
-        <div id="ruler-row">
-          <div class="corner"></div>
-          <canvas id="ruler"></canvas>
+    <div id="timeline-body">
+      <div id="timeline-scroll">
+        <div id="timeline">
+          <div id="ruler-row">
+            <div class="corner"></div>
+            <canvas id="ruler"></canvas>
+          </div>
+          <div id="tracks"></div>
+          <div id="playhead"><div class="ph-head"></div></div>
+          <div id="snap-line"></div>
+          <div id="marquee" hidden></div>
         </div>
-        <div id="tracks"></div>
-        <div id="playhead"><div class="ph-head"></div></div>
-        <div id="snap-line"></div>
       </div>
+      <div id="meter-col" title="Audio meters"><canvas id="meter"></canvas><div class="meter-label">L R</div></div>
     </div>
   </section>
 </div>
@@ -118,24 +177,28 @@
 <!-- Export dialog -->
 <div class="modal-backdrop" id="export-modal" hidden>
   <div class="modal">
-    <div class="modal-head"><h2>Export Video</h2><button class="x" data-close>×</button></div>
+    <div class="modal-head"><h2>Export Settings</h2><button class="x" data-close>×</button></div>
     <div class="modal-body" id="export-form">
-      <label class="field"><span>File</span>
+      <label class="field"><span>Output name</span>
         <div class="file-pick"><input type="text" id="ex-path" readonly placeholder="Choose where to save…"><button class="btn" id="ex-browse">Choose…</button></div>
       </label>
       <div class="row2">
-        <label class="field"><span>Resolution</span><select id="ex-res"></select></label>
+        <label class="field"><span>Range</span><select id="ex-range"><option value="all">Entire Sequence</option><option value="inout">Sequence In/Out</option></select></label>
+        <label class="field"><span>Format</span><select disabled><option>H.264 (MP4) + AAC</option></select></label>
+      </div>
+      <div class="row2">
+        <label class="field"><span>Frame size</span><select id="ex-res"></select></label>
         <label class="field"><span>Frame rate</span><select id="ex-fps"></select></label>
       </div>
       <div class="row2">
         <label class="field"><span>Quality</span>
           <select id="ex-quality">
-            <option value="high">High (larger file)</option>
-            <option value="standard" selected>Standard</option>
+            <option value="high">High bitrate</option>
+            <option value="standard" selected>Match source (standard)</option>
             <option value="draft">Draft (fast)</option>
           </select>
         </label>
-        <label class="field"><span>Format</span><select disabled><option>H.264 + AAC</option></select></label>
+        <label class="field"><span>Sequence</span><select id="ex-seq"></select></label>
       </div>
       <div class="ex-summary" id="ex-summary"></div>
     </div>
@@ -151,6 +214,15 @@
   </div>
 </div>
 
+<!-- Sequence settings -->
+<div class="modal-backdrop" id="seq-modal" hidden>
+  <div class="modal">
+    <div class="modal-head"><h2>Sequence Settings</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body" id="seq-form"></div>
+    <div class="modal-foot"><button class="btn" data-close>Cancel</button><button class="btn primary" id="seq-ok">OK</button></div>
+  </div>
+</div>
+
 <!-- Shortcuts dialog -->
 <div class="modal-backdrop" id="shortcuts-modal" hidden>
   <div class="modal wide">
@@ -163,11 +235,14 @@
 <div id="toast" hidden></div>
 <div id="drop-overlay" hidden><div>Drop to import</div></div>
 
+<script src="../shared/defs.js"></script>
 <script src="js/core.js"></script>
-<script src="js/text.js"></script>
+<script src="js/render.js"></script>
+<script src="js/audio.js"></script>
 <script src="js/preview.js"></script>
 <script src="js/timeline.js"></script>
 <script src="js/inspector.js"></script>
+<script src="js/panels.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

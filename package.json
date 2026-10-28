@@ -1,15 +1,17 @@
 {
   "name": "frameline",
   "productName": "Frameline",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "A Premiere-style video editor for macOS, built on Electron and FFmpeg",
   "main": "src/main.js",
   "author": "Nurunnabi Islam",
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder --mac",
-    "dist:dir": "electron-builder --mac --dir"
+    "postinstall": "node scripts/setup.js",
+    "setup": "node scripts/setup.js",
+    "start": "node scripts/setup.js --quiet && electron .",
+    "dist": "node scripts/setup.js --quiet && electron-builder --mac",
+    "dist:dir": "node scripts/setup.js --quiet && electron-builder --mac --dir"
   },
   "dependencies": {
     "@ffprobe-installer/ffprobe": "^2.1.2",
@@ -24,11 +26,25 @@
     "productName": "Frameline",
     "mac": {
       "category": "public.app-category.video",
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "icon": "build/icon.png"
     },
-    "files": ["src/**/*", "package.json"],
-    "asarUnpack": ["node_modules/ffmpeg-static/**", "node_modules/@ffprobe-installer/**"],
-    "fileAssociations": [{ "ext": "flproj", "name": "Frameline Project", "role": "Editor" }]
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/@ffprobe-installer/**"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "flproj",
+        "name": "Frameline Project",
+        "role": "Editor"
+      }
+    ]
   }
 }

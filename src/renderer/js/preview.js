@@ -1,14 +1,16 @@
-/* Frameline — Program monitor: playback clock, media element sync and the
-   canvas compositor (tracks bottom-up, with opacity, fades, transforms and colour). */
+/* Frameline — Program monitor: playback clock, media element sync (picture
+   and sound, including transition handles) and the compositor. */
 'use strict';
 
 (() => {
   const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: false });
   const stage = document.getElementById('stage');
   const monitor = document.getElementById('monitor');
+  const D = window.FLDefs;
 
   const pool = new Map();   // clipId -> { el, src, used }
+  FL._pool = pool;
   const images = new Map(); // mediaId -> HTMLImageElement
   let quality = 1;
   let needsDraw = true;
@@ -16,10 +18,11 @@
   let playStartTime = 0;
 
   FL.requestDraw = () => { needsDraw = true; };
+  FL.previewQuality = () => quality;
 
-  // ---------- sizing ----------
+  // ---------------------------------------------------------------- sizing
   function layout() {
-    const { width: W, height: H } = FL.project.settings;
+    const { width: W, height: H } = FL.S();
     const cw = Math.round(W * quality);
     const ch = Math.round(H * quality);
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
@@ -31,25 +34,26 @@
     needsDraw = true;
   }
   new ResizeObserver(layout).observe(monitor);
-  FL.on('change', () => { layout(); });
+  FL.on('change', layout);
+  FL.on('seq', layout);
   FL.layoutPreview = layout;
   FL.setPreviewQuality = (q) => { quality = q; layout(); };
 
-  // ---------- media sources ----------
-  function srcFor(m) { return window.api.fileUrl(m.proxy || m.path); }
-
-  function imageFor(m) {
+  // ---------------------------------------------------------------- media sources
+  const srcFor = (m) => window.api.mediaUrl(m.proxy || m.path);
+  FL.imageFor = (m) => {
     const src = srcFor(m);
     let img = images.get(m.id);
     if (!img || img.dataset.src !== src) {
       img = new Image();
+      img.crossOrigin = 'anonymous';
       img.dataset.src = src;
       img.onload = () => { needsDraw = true; };
       img.src = src;
       images.set(m.id, img);
     }
     return img;
-  }
+  };
 
   function elementFor(clip, m) {
     const src = srcFor(m);
@@ -57,8 +61,10 @@
     if (entry && entry.src !== src) { release(clip.id); entry = null; }
     if (!entry) {
       const el = clip.type === 'audio' ? new Audio() : document.createElement('video');
+      el.crossOrigin = 'anonymous';
       el.preload = 'auto';
       el.playsInline = true;
+      el.preservesPitch = true;
       el.src = src;
       el.addEventListener('seeked', () => { needsDraw = true; });
       el.addEventListener('loadeddata', () => { needsDraw = true; });
@@ -73,21 +79,24 @@
     const e = pool.get(id);
     if (!e) return;
     e.el.pause();
+    FL.audio.detach(e.el);
     e.el.removeAttribute('src');
     e.el.load();
     pool.delete(id);
   }
   function trimPool() {
-    if (pool.size <= 14) return;
+    if (pool.size <= 16) return;
     const sorted = [...pool.entries()].sort((a, b) => a[1].used - b[1].used);
-    for (const [id] of sorted.slice(0, pool.size - 14)) release(id);
+    for (const [id] of sorted.slice(0, pool.size - 16)) release(id);
   }
 
-  // ---------- transport ----------
+  // ---------------------------------------------------------------- transport
   FL.play = () => {
-    const dur = FL.duration();
-    if (!dur) return;
-    if (FL.time >= dur - FL.frame()) FL.time = 0;
+    const end = FL.duration();
+    if (!end) return;
+    FL.audio.resume();
+    FL.audio.updateBuses();
+    if (FL.time >= end - FL.frame()) FL.time = 0;
     FL.playing = true;
     playStartPerf = performance.now();
     playStartTime = FL.time;
@@ -110,29 +119,69 @@
     FL.emit('time', FL.time);
   };
 
-  // ---------- sync media elements to the playhead ----------
+  // ---------------------------------------------------------------- audio transition weights
+  const curve = (type, p) => {
+    p = FL.clamp(p, 0, 1);
+    const c = (D.AUDIO_TRANSITIONS[type] || D.AUDIO_TRANSITIONS.constantpower).curve;
+    if (c === 'qsin') return Math.sin((p * Math.PI) / 2);
+    if (c === 'exp') return Math.exp(-11.512925 * (1 - p));
+    return p;
+  };
+  FL.audioWeight = (c, t) => {
+    let w = 1;
+    const end = c.start + c.duration;
+    const prev = FL.prevAdj(c);
+    const next = FL.nextAdj(c);
+    if (c.atransIn) {
+      const d = c.atransIn.duration;
+      const s = prev ? c.start - d / 2 : c.start;
+      if (t < s + d) w *= curve(c.atransIn.type, (t - s) / d);
+    }
+    if (next && next.atransIn) {
+      const d = next.atransIn.duration;
+      const s = end - d / 2;
+      if (t > s) w *= curve(next.atransIn.type, 1 - (t - s) / d);
+    } else if (c.atransOut) {
+      const d = c.atransOut.duration;
+      if (t > end - d) w *= curve(c.atransOut.type, (end - t) / d);
+    }
+    return w;
+  };
+
+  // ---------------------------------------------------------------- sync media elements
   function sync(t) {
     const active = new Set();
     const fps = FL.fps();
-    for (const clip of FL.project.clips) {
+    const seq = FL.seq();
+    for (const clip of seq.clips) {
       if (clip.type !== 'video' && clip.type !== 'audio') continue;
-      const local = t - clip.start;
-      if (local < -0.75 || local >= clip.duration) continue;
       const m = FL.media(clip.mediaId);
-      if (!m) continue;
-      const track = FL.track(clip.trackId);
+      if (!m || m.missing) continue;
+      const ve = FL.vExt(clip);
+      const ae = FL.aExt(clip);
+      const head = Math.max(ve.head, ae.head);
+      const tail = Math.max(ve.tail, ae.tail);
+      const local = t - clip.start;
+      if (local < -head - 0.75 || local >= clip.duration + tail) continue;
       const el = elementFor(clip, m);
       active.add(clip.id);
       const speed = clip.speed || 1;
-      const expected = (clip.in || 0) + Math.max(0, local) * speed;
-      const inside = local >= 0;
+      const maxT = Math.max(0, (m.duration || 0) - 0.04);
+      const expected = FL.clamp((clip.in || 0) + local * speed, 0, maxT);
+      const inside = local >= -head && local < clip.duration + tail;
 
-      const silent = clip.muted || !m.hasAudio || (track && track.kind === 'audio' && track.muted) || !inside;
-      el.muted = !!silent;
-      if (!silent) el.volume = FL.clamp((clip.volume ?? 1) * FL.fadeFactor(clip, t), 0, 1);
+      if (m.hasAudio) {
+        FL.audio.attach(el, clip);
+        const audible = FL.playing && local >= -ae.head && local < clip.duration + ae.tail && !clip.muted;
+        const u = FL.clamp(local, 0, clip.duration);
+        const lvl = audible ? (FL.kfValue(clip, 'volume', u) ?? 1) * FL.fadeFactor(clip, t) * FL.audioWeight(clip, t) : 0;
+        FL.audio.set(el, lvl, FL.kfValue(clip, 'pan', u) || 0);
+      }
+      el.muted = false;
       if (el.playbackRate !== speed) { try { el.playbackRate = speed; } catch (_) {} }
 
-      if (FL.playing && inside) {
+      const atEnd = expected >= maxT - 0.001 && local > 0;
+      if (FL.playing && inside && !atEnd) {
         if (el.paused) {
           if (Math.abs(el.currentTime - expected) > 0.05) el.currentTime = expected;
           el.play().catch(() => {});
@@ -151,169 +200,222 @@
     }
   }
 
-  // ---------- compositor ----------
-  function drawMedia(src, m, clip, alpha) {
-    const { width: W, height: H } = FL.project.settings;
-    const fit = Math.min(W / m.width, H / m.height) * (clip.scale ?? 1);
-    const w = m.width * fit;
-    const h = m.height * fit;
+  // ---------------------------------------------------------------- compositor
+  function sourceFor(c) {
+    if (c.type === 'video') { const e = pool.get(c.id); return e ? e.el : null; }
+    if (c.type === 'image') { const m = FL.media(c.mediaId); return m && !m.missing ? FL.imageFor(m) : null; }
+    return null;
+  }
+  const drawSide = (c, t, q) => (x) => R.drawClip(x, c, t - c.start, sourceFor(c), q);
+
+  // What a video track shows at time t: a clip, a transition, or nothing.
+  FL.trackStateAt = (track, t) => {
+    const clips = FL.clipsOn(track.id);
+    for (const b of clips) {
+      if (!b.transIn) continue;
+      const a = FL.prevAdj(b);
+      const d = b.transIn.duration;
+      if (a && t >= b.start - d / 2 && t < b.start + d / 2) {
+        return { kind: 'trans', a, b, type: b.transIn.type, p: 1 - (t - (b.start - d / 2)) / d };
+      }
+    }
+    const c = clips.find((x) => t >= x.start && t < x.start + x.duration);
+    if (!c) return null;
+    if (c.type !== 'adjust') {
+      if (c.transIn && !FL.prevAdj(c) && t < c.start + c.transIn.duration) {
+        return { kind: 'trans', a: null, b: c, type: c.transIn.type, p: 1 - (t - c.start) / c.transIn.duration };
+      }
+      const next = FL.nextAdj(c);
+      if (c.transOut && !(next && next.transIn) && t > c.start + c.duration - c.transOut.duration) {
+        const d = c.transOut.duration;
+        return { kind: 'trans', a: c, b: null, type: c.transOut.type, p: 1 - (t - (c.start + c.duration - d)) / d };
+      }
+    }
+    return { kind: 'clip', c };
+  };
+
+  const R = FL.R;
+  FL.compose = (targetCanvas, tctx, t, q) => {
+    const { width: W, height: H, bg } = FL.S();
+    tctx.setTransform(1, 0, 0, 1, 0, 0);
+    tctx.globalAlpha = 1;
+    tctx.filter = 'none';
+    tctx.globalCompositeOperation = 'source-over';
+    tctx.fillStyle = bg || '#000';
+    tctx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+    tctx.setTransform(q, 0, 0, q, 0, 0);
+    const tracks = FL.seq().tracks.filter((tr) => tr.kind === 'video').reverse();
+    for (const tr of tracks) {
+      if (tr.hidden) continue;
+      const st = FL.trackStateAt(tr, t);
+      if (!st) continue;
+      if (st.kind === 'clip') {
+        if (st.c.type === 'adjust') R.drawAdjust(targetCanvas, tctx, st.c, t - st.c.start, q);
+        else drawSide(st.c, t, q)(tctx);
+      } else {
+        R.transition(tctx, st.type, FL.clamp(st.p, 0, 1),
+          st.a ? drawSide(st.a, t, q) : null,
+          st.b ? drawSide(st.b, t, q) : null, q);
+      }
+    }
+    tctx.setTransform(1, 0, 0, 1, 0, 0);
+  };
+
+  function drawOverlay(t) {
+    const sel = FL.selected();
+    if (FL.playing || !sel || !FL.isVisual(sel) || sel.type === 'adjust') return;
+    if (t < sel.start || t >= sel.start + sel.duration) return;
+    const tr = FL.track(sel.trackId);
+    if (!tr || tr.hidden) return;
+    const { width: W } = FL.S();
+    const k = stage.clientWidth / W;
+    const u = t - sel.start;
+    const mo = R.motion(sel, u);
+    const { bw, bh } = R.baseSize(sel);
     ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(W / 2 + (clip.x || 0), H / 2 + (clip.y || 0));
-    if (clip.rotation) ctx.rotate((clip.rotation * Math.PI) / 180);
-    const b = clip.brightness || 0;
-    const c = clip.contrast || 0;
-    const s = clip.saturation ?? 100;
-    if (b || c || s !== 100) ctx.filter = `brightness(${1 + b / 100 * 0.5}) contrast(${1 + c / 100}) saturate(${s / 100})`;
-    ctx.drawImage(src, -w / 2, -h / 2, w, h);
+    ctx.setTransform(quality, 0, 0, quality, 0, 0);
+    ctx.translate(FL.S().width / 2 + mo.x, FL.S().height / 2 + mo.y);
+    ctx.rotate((mo.r * Math.PI) / 180);
+    ctx.scale(mo.s, mo.s);
+    ctx.lineWidth = 1.5 / k / mo.s;
+    ctx.strokeStyle = '#4c8dff';
+    ctx.setLineDash([8 / k / mo.s, 5 / k / mo.s]);
+    ctx.strokeRect(-bw / 2, -bh / 2, bw, bh);
+    ctx.setLineDash([]);
+    const hs = 7 / k / mo.s;
+    ctx.fillStyle = '#fff';
+    for (const [hx, hy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) ctx.fillRect(hx * bw / 2 - hs / 2, hy * bh / 2 - hs / 2, hs, hs);
+    // mask outline
+    const me = FL.maskEdit && FL.maskEdit.clipId === sel.id && (sel.effects || []).find((e) => e.id === FL.maskEdit.fxId);
+    if (me && me.mask) {
+      const mk = me.mask;
+      ctx.strokeStyle = '#ffd34d';
+      ctx.lineWidth = 2 / k / mo.s;
+      ctx.beginPath();
+      const cx = (mk.cx - 0.5) * bw;
+      const cy = (mk.cy - 0.5) * bh;
+      if (mk.shape === 'ellipse') ctx.ellipse(cx, cy, (mk.w * bw) / 2, (mk.h * bh) / 2, 0, 0, Math.PI * 2);
+      else ctx.rect(cx - (mk.w * bw) / 2, cy - (mk.h * bh) / 2, mk.w * bw, mk.h * bh);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
-  FL.clipBounds = (clip) => {
-    // Box in sequence pixels (centre, size, rotation) for the selection outline & hit tests.
-    const { width: W, height: H } = FL.project.settings;
-    let w;
-    let h;
-    if (clip.type === 'text') {
-      const L = FL.textLayout(ctx, clip);
-      w = L.bw; h = L.bh;
-    } else {
-      const m = FL.media(clip.mediaId);
-      if (!m || !m.width) return null;
-      const fit = Math.min(W / m.width, H / m.height) * (clip.scale ?? 1);
-      w = m.width * fit; h = m.height * fit;
-    }
-    return { cx: W / 2 + (clip.x || 0), cy: H / 2 + (clip.y || 0), w, h, rot: ((clip.rotation || 0) * Math.PI) / 180 };
+  // Full-quality still of the current frame (Export Frame).
+  FL.renderFrame = (t) => {
+    const { width: W, height: H } = FL.S();
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    FL.compose(c, c.getContext('2d'), t, 1);
+    return c;
   };
 
-  function visibleClipsAt(t) {
-    const out = [];
-    const tracks = FL.project.tracks.filter((tr) => tr.kind === 'video').reverse();
-    for (const tr of tracks) {
-      if (tr.hidden) continue;
-      const c = FL.clipAt(tr.id, t);
-      if (c) out.push(c);
-    }
-    return out; // bottom first
-  }
-
-  function draw(t) {
-    const { width: W, height: H, bg } = FL.project.settings;
-    ctx.setTransform(quality, 0, 0, quality, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.filter = 'none';
-    ctx.fillStyle = bg || '#000';
-    ctx.fillRect(0, 0, W, H);
-
-    for (const clip of visibleClipsAt(t)) {
-      const alpha = (clip.opacity ?? 1) * FL.fadeFactor(clip, t);
-      if (alpha <= 0) continue;
-      if (clip.type === 'text') { FL.drawText(ctx, clip, W, H, alpha); continue; }
-      const m = FL.media(clip.mediaId);
-      if (!m || !m.width) continue;
-      if (clip.type === 'image') {
-        const img = imageFor(m);
-        if (img.complete && img.naturalWidth) drawMedia(img, m, clip, alpha);
-      } else {
-        const entry = pool.get(clip.id);
-        if (entry && entry.el.readyState >= 2 && entry.el.videoWidth) drawMedia(entry.el, m, clip, alpha);
-      }
-    }
-
-    // selection outline
-    const sel = FL.selected();
-    if (!FL.playing && sel && sel.type !== 'audio' && t >= sel.start && t < sel.start + sel.duration) {
-      const tr = FL.track(sel.trackId);
-      const b = tr && !tr.hidden && FL.clipBounds(sel);
-      if (b) {
-        ctx.save();
-        ctx.translate(b.cx, b.cy);
-        ctx.rotate(b.rot);
-        ctx.lineWidth = 2 / quality / (stage.clientWidth / W);
-        ctx.strokeStyle = '#4c8dff';
-        ctx.setLineDash([8 / (stage.clientWidth / W), 5 / (stage.clientWidth / W)]);
-        ctx.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h);
-        ctx.setLineDash([]);
-        const hs = 7 / (stage.clientWidth / W);
-        ctx.fillStyle = '#fff';
-        for (const [hx, hy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) ctx.fillRect(hx * b.w / 2 - hs / 2, hy * b.h / 2 - hs / 2, hs, hs);
-        ctx.restore();
-      }
-    }
-  }
-
-  // ---------- main loop ----------
+  // ---------------------------------------------------------------- loop
   let lastEmit = 0;
   function tick(now) {
     if (FL.playing) {
-      const dur = FL.duration();
+      const end = FL.duration();
       let t = playStartTime + (now - playStartPerf) / 1000;
-      if (t >= dur) { t = dur; FL.time = t; FL.pause(); }
+      if (t >= end) { t = end; FL.time = t; FL.pause(); }
       else FL.time = t;
       sync(FL.time);
-      draw(FL.time);
+      FL.compose(canvas, ctx, FL.time, quality);
       if (now - lastEmit > 30) { FL.emit('time', FL.time); lastEmit = now; }
     } else if (needsDraw) {
       needsDraw = false;
       sync(FL.time);
-      draw(FL.time);
+      FL.compose(canvas, ctx, FL.time, quality);
+      drawOverlay(FL.time);
     }
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
 
-  // ---------- direct manipulation in the monitor ----------
+  // ---------------------------------------------------------------- direct manipulation
   function toSeq(e) {
     const r = canvas.getBoundingClientRect();
-    const { width: W, height: H } = FL.project.settings;
+    const { width: W, height: H } = FL.S();
     return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H, k: W / r.width };
   }
-  function hit(clip, p) {
-    const b = FL.clipBounds(clip);
-    if (!b) return false;
-    const dx = p.x - b.cx;
-    const dy = p.y - b.cy;
-    const lx = dx * Math.cos(-b.rot) - dy * Math.sin(-b.rot);
-    const ly = dx * Math.sin(-b.rot) + dy * Math.cos(-b.rot);
-    return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
+  function hit(c, p) {
+    const u = FL.time - c.start;
+    const mo = R.motion(c, u);
+    const { bw, bh } = R.baseSize(c);
+    const { width: W, height: H } = FL.S();
+    const dx = p.x - (W / 2 + mo.x);
+    const dy = p.y - (H / 2 + mo.y);
+    const rot = (-mo.r * Math.PI) / 180;
+    const lx = dx * Math.cos(rot) - dy * Math.sin(rot);
+    const ly = dx * Math.sin(rot) + dy * Math.cos(rot);
+    return Math.abs(lx) <= (bw * mo.s) / 2 && Math.abs(ly) <= (bh * mo.s) / 2;
+  }
+  function visibleAt(t) {
+    const out = [];
+    for (const tr of FL.seq().tracks.filter((x) => x.kind === 'video')) {
+      if (tr.hidden) continue;
+      const c = FL.clipAt(tr.id, t);
+      if (c && c.type !== 'adjust') out.push(c);
+    }
+    return out; // topmost first
   }
 
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     const p = toSeq(e);
-    const clips = visibleClipsAt(FL.time).reverse(); // topmost first
     let target = FL.selected();
-    if (!(target && clips.includes(target) && hit(target, p))) target = clips.find((c) => hit(c, p));
-    if (!target) { FL.select(null); return; }
-    FL.select(target.id);
+    const vis = visibleAt(FL.time);
+    if (!(target && vis.includes(target) && hit(target, p))) target = vis.find((c) => hit(c, p));
+    if (!target) { if (!FL.maskEdit) FL.select(null); return; }
+    if (target.id !== FL.selectedId) FL.select(target.id);
     if (FL.isLocked(target)) return;
-    const start = { x: target.x || 0, y: target.y || 0 };
+    const u = FL.localTime(target);
+    const fx = FL.maskEdit && FL.maskEdit.clipId === target.id && (target.effects || []).find((x) => x.id === FL.maskEdit.fxId && x.mask);
+    const startPos = fx ? { x: fx.mask.cx, y: fx.mask.cy } : { x: FL.kfValue(target, 'x', u) || 0, y: FL.kfValue(target, 'y', u) || 0 };
     let moved = false;
     canvas.setPointerCapture(e.pointerId);
     const move = (ev) => {
       const q = toSeq(ev);
       if (!moved) { FL.pushUndo(); moved = true; }
-      let nx = start.x + (q.x - p.x);
-      let ny = start.y + (q.y - p.y);
-      if (!ev.shiftKey) { // snap to centre lines
-        const th = 10 * q.k;
-        if (Math.abs(nx) < th) nx = 0;
-        if (Math.abs(ny) < th) ny = 0;
+      let dx = q.x - p.x;
+      let dy = q.y - p.y;
+      if (fx) {
+        const mo = R.motion(target, u);
+        const { bw, bh } = R.baseSize(target);
+        const rot = (-mo.r * Math.PI) / 180;
+        const lx = (dx * Math.cos(rot) - dy * Math.sin(rot)) / mo.s;
+        const ly = (dx * Math.sin(rot) + dy * Math.cos(rot)) / mo.s;
+        fx.mask.cx = FL.clamp(startPos.x + lx / bw, -0.5, 1.5);
+        fx.mask.cy = FL.clamp(startPos.y + ly / bh, -0.5, 1.5);
+      } else {
+        let nx = startPos.x + dx;
+        let ny = startPos.y + dy;
+        if (!ev.shiftKey) {
+          const th = 10 * q.k;
+          if (Math.abs(nx) < th) nx = 0;
+          if (Math.abs(ny) < th) ny = 0;
+        }
+        FL.setProp(target, 'x', Math.round(nx), u);
+        FL.setProp(target, 'y', Math.round(ny), u);
       }
-      target.x = Math.round(nx);
-      target.y = Math.round(ny);
       needsDraw = true;
       FL.emit('inspector-refresh');
     };
     const up = () => {
       canvas.removeEventListener('pointermove', move);
       canvas.removeEventListener('pointerup', up);
-      if (moved) FL.changed();
+      if (moved) FL.changed({ source: 'monitor' });
     };
     canvas.addEventListener('pointermove', move);
     canvas.addEventListener('pointerup', up);
   });
 
+  // Sets a property, writing a keyframe when that property is animated.
+  FL.setProp = (c, prop, v, u = FL.localTime(c)) => {
+    if (FL.hasKf(c, prop)) FL.setKf(c, prop, u, v);
+    else c[prop] = v;
+  };
+
   FL.on('change', () => { needsDraw = true; });
   FL.on('select', () => { needsDraw = true; });
+  FL.on('seq', () => { for (const id of [...pool.keys()]) release(id); needsDraw = true; });
 })();

@@ -4,6 +4,9 @@ const { pathToFileURL } = require('url');
 contextBridge.exposeInMainWorld('api', {
   platform: process.platform,
   fileUrl: (p) => pathToFileURL(p).href,
+  mediaUrl: (p) => 'flmedia://media/' + encodeURIComponent(p),
+  allowMedia: (paths) => ipcRenderer.invoke('media:allow', paths),
+  saveFrame: (dataUrl, name) => ipcRenderer.invoke('frame:save', dataUrl, name),
   pathForFile: (file) => (webUtils && webUtils.getPathForFile ? webUtils.getPathForFile(file) : file.path),
 
   pickMedia: () => ipcRenderer.invoke('media:pick'),
