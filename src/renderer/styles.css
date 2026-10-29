@@ -832,3 +832,7 @@ body.dnd-active, body.dnd-active * { cursor: grabbing !important; }
 .pc[data-panel="meters"] #meter { flex: 1; width: 100%; min-height: 0; display: block; }
 .pc[data-panel="timeline"] #timeline-scroll { flex: 1; min-height: 0; }
 .panel-foot .spacer { flex: 1; }
+
+/* selected gap */
+.gap-sel { position: absolute; top: 4px; bottom: 4px; z-index: 1; border-radius: 5px; background: repeating-linear-gradient(135deg, rgba(76,141,255,.28) 0 6px, rgba(76,141,255,.14) 6px 12px); border: 1px solid rgba(76,141,255,.9); display: flex; align-items: center; justify-content: center; pointer-events: none; overflow: hidden; }
+.gap-sel span { font: 600 10px "SF Mono", Menlo, monospace; color: #cfe0ff; background: rgba(10,20,40,.7); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }

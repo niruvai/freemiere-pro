@@ -1,7 +1,7 @@
 {
   "name": "freemiere-pro",
   "productName": "Freemiere Pro",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Freemiere Pro \u2014 a Premiere-style video editor for macOS, built on Electron and FFmpeg",
   "main": "src/main.js",
   "author": "Nurunnabi Islam",
@@ -10,8 +10,8 @@
     "postinstall": "node scripts/setup.js",
     "setup": "node scripts/setup.js",
     "start": "node scripts/setup.js --quiet && electron .",
-    "dist": "node scripts/setup.js --quiet && electron-builder --mac",
-    "dist:dir": "node scripts/setup.js --quiet && electron-builder --mac --dir"
+    "dist": "node scripts/setup.js --quiet && electron-builder --mac --publish never",
+    "dist:dir": "node scripts/setup.js --quiet && electron-builder --mac --dir --publish never"
   },
   "dependencies": {
     "@ffprobe-installer/ffprobe": "^2.1.2",
@@ -27,9 +27,12 @@
     "mac": {
       "category": "public.app-category.video",
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "identity": null,
+      "minimumSystemVersion": "11.0"
     },
     "files": [
       "src/**/*",
@@ -50,6 +53,19 @@
         "name": "Freemiere Pro Project (old)",
         "role": "Editor"
       }
-    ]
+    ],
+    "artifactName": "Freemiere-Pro-${arch}.${ext}",
+    "dmg": {
+      "title": "Freemiere Pro ${version}"
+    },
+    "afterPack": "build/afterPack.js"
+  },
+  "homepage": "https://github.com/niruvai/freemiere-pro",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niruvai/freemiere-pro.git"
+  },
+  "bugs": {
+    "url": "https://github.com/niruvai/freemiere-pro/issues"
   }
 }

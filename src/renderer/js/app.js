@@ -338,6 +338,16 @@
     lift: () => liftExtract(false),
     extract: () => liftExtract(true),
     delete: () => {
+      if (FL.selGap) {
+        FL.pushUndo();
+        const closed = FL.closeGap(FL.selGap);
+        if (!closed) { FL.undoStack.pop(); FL.toast('Can’t close this gap — a clip on a linked track is in the way (or the track is locked)'); return; }
+        const gap = FL.selGap;
+        FL.selGap = null;
+        FL.changed();
+        FL.toast(closed < gap.end - gap.start - 1e-3 ? `Closed ${FL.timecode(closed)} (a linked track had less room)` : `Gap closed (${FL.timecode(closed)})`);
+        return;
+      }
       if (FL.selTrans) {
         const { clipId, side, audio } = FL.selTrans;
         const c = FL.clip(clipId);
@@ -356,7 +366,15 @@
       FL.changed();
       FL.emit('select', null);
     },
+    closeGaps: () => {
+      FL.pushUndo();
+      const t = FL.closeAllGaps();
+      if (!t) { FL.undoStack.pop(); FL.toast('No gaps to close'); return; }
+      FL.changed();
+      FL.toast(`All gaps closed (${FL.timecode(t)} removed)`);
+    },
     rippleDelete: () => {
+      if (FL.selGap) return cmds.delete();
       const list = FL.selectedClips().filter((c) => !FL.isLocked(c)).sort((a, b) => b.start - a.start);
       if (!list.length) return;
       FL.pushUndo();

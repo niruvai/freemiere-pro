@@ -9,6 +9,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { buildExportArgs } = require('./export');
+const updater = require('./updater');
 
 app.setName('Freemiere Pro');
 nativeTheme.themeSource = 'dark';
@@ -268,7 +269,21 @@ function buildMenu() {
   // Single-key shortcuts are shown in menus but handled by the editor, so they never steal typing.
   const show = (accelerator) => ({ accelerator, registerAccelerator: false });
   const template = [
-    ...(isMac ? [{ role: 'appMenu' }] : []),
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { label: 'Check for Updates…', click: () => updater.check({ interactive: true }) },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
     {
       label: 'File',
       submenu: [
@@ -334,6 +349,8 @@ function buildMenu() {
         { label: 'Go to Next Marker', ...show('Shift+M'), click: cmd('nextMarker') },
         { label: 'Go to Previous Marker', ...show('Alt+Shift+M'), click: cmd('prevMarker') },
         { type: 'separator' },
+        { label: 'Close Gaps', click: cmd('closeGaps') },
+        { type: 'separator' },
         { label: 'Snap in Timeline', ...show('S'), click: cmd('toggleSnap') },
         { label: 'Add Video Track', click: cmd('addVideoTrack') },
         { label: 'Add Audio Track', click: cmd('addAudioTrack') },
@@ -396,7 +413,12 @@ function buildMenu() {
     },
     {
       role: 'help',
-      submenu: [{ label: 'Keyboard Shortcuts', click: cmd('shortcuts') }],
+      submenu: [
+        { label: 'Keyboard Shortcuts', click: cmd('shortcuts') },
+        { label: 'Check for Updates…', click: () => updater.check({ interactive: true }) },
+        { label: 'Release Notes', click: () => shell.openExternal('https://github.com/niruvai/freemiere-pro/releases') },
+        { label: 'Report a Problem', click: () => shell.openExternal('https://github.com/niruvai/freemiere-pro/issues') },
+      ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -564,6 +586,7 @@ app.whenReady().then(() => {
   protocol.handle('flmedia', serveMedia);
   buildMenu();
   createWindow();
+  updater.start({ window: () => win, isDirty: () => dirty, clearDirty: () => { dirty = false; } });
   app.on('activate', () => { if (!win) createWindow(); });
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

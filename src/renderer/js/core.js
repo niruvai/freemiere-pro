@@ -13,6 +13,7 @@ const FL = (window.FL = {
   selectedId: null,      // primary selected clip
   sel: new Set(),        // all selected clips
   selTrans: null,        // { clipId, side: 'in'|'out', audio: bool }
+  selGap: null,          // { trackId, start, end } — empty space picked in the timeline
   tool: 'select',
   snap: true,
   linkSel: true,         // Premiere's "Linked Selection"
@@ -203,6 +204,7 @@ FL.relink = (copies) => {
 // opts.solo (Option-click) selects only one side of a linked pair.
 FL.select = (id, opts = {}) => {
   FL.selTrans = null;
+  FL.selGap = null;
   const group = id ? FL.withPartners([id], opts.solo) : [];
   if (!id) { FL.sel.clear(); FL.selectedId = null; }
   else if (opts.toggle) {
@@ -215,12 +217,21 @@ FL.select = (id, opts = {}) => {
 };
 FL.selectMany = (ids, solo) => {
   FL.selTrans = null;
+  FL.selGap = null;
   ids = FL.withPartners(ids, solo);
   FL.sel = new Set(ids);
   FL.selectedId = ids[ids.length - 1] || null;
   FL.emit('select', FL.selectedId);
 };
+FL.selectGap = (gap) => {
+  FL.sel.clear();
+  FL.selectedId = null;
+  FL.selTrans = null;
+  FL.selGap = gap;
+  FL.emit('select', null);
+};
 FL.selectTransition = (clipId, side, audio) => {
+  FL.selGap = null;
   FL.sel.clear();
   FL.selectedId = null;
   FL.selTrans = { clipId, side, audio: !!audio };
@@ -509,6 +520,70 @@ FL.splitClips = (list, t) => {
     rights.push(r);
   }
   return rights;
+};
+
+// ---------------------------------------------------------------- gaps
+// The empty space on a track around time t, if there is a clip after it to pull left.
+FL.gapAt = (trackId, t) => {
+  const clips = FL.clipsOn(trackId);
+  if (clips.some((c) => t >= c.start && t < c.start + c.duration)) return null;
+  const before = clips.filter((c) => c.start + c.duration <= t + 1e-6);
+  const after = clips.filter((c) => c.start >= t - 1e-6);
+  if (!after.length) return null;
+  const start = before.length ? Math.max(...before.map((c) => c.start + c.duration)) : 0;
+  const end = Math.min(...after.map((c) => c.start));
+  return end - start > 1e-3 ? { trackId, start, end } : null;
+};
+// Ripple-deletes a gap: later clips on that track slide left. Tracks holding their
+// linked partners move by the same amount so video and audio stay in sync.
+// Returns the amount closed (0 if nothing could move).
+FL.closeGap = (gap) => {
+  const eps = 1e-6;
+  const clips = FL.seq().clips;
+  const tracks = new Set([gap.trackId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const c of clips) {
+      if (!tracks.has(c.trackId) || c.start < gap.end - eps) continue;
+      for (const p of FL.partners(c)) if (!tracks.has(p.trackId)) { tracks.add(p.trackId); grew = true; }
+    }
+  }
+  let amount = gap.end - gap.start;
+  for (const tid of tracks) {
+    const tr = FL.track(tid);
+    if (!tr || tr.locked) return 0;
+    const moving = clips.filter((c) => c.trackId === tid && c.start >= gap.end - eps);
+    if (!moving.length) continue;
+    const first = Math.min(...moving.map((c) => c.start));
+    const staticEnd = Math.max(0, ...clips.filter((c) => c.trackId === tid && c.start < gap.end - eps).map((c) => c.start + c.duration));
+    amount = Math.min(amount, first - staticEnd);
+  }
+  amount = Math.floor(amount * FL.fps() + 1e-6) / FL.fps();
+  if (amount <= 1e-6) return 0;
+  for (const c of clips) if (tracks.has(c.trackId) && c.start >= gap.end - eps) c.start = Math.max(0, c.start - amount);
+  for (const m of FL.seq().markers) if (m.t >= gap.end - eps && tracks.size === FL.seq().tracks.length) m.t -= amount;
+  return amount;
+};
+// Sequence ▸ Close Gaps: removes every gap between clips (not the space before the first clip).
+FL.closeAllGaps = () => {
+  let total = 0;
+  for (let guard = 0; guard < 2000; guard++) {
+    let done = false;
+    for (const tr of [...FL.vTracks(), ...FL.aTracks()]) {
+      const clips = FL.clipsOn(tr.id);
+      for (let i = 1; i < clips.length && !done; i++) {
+        const end = Math.max(...clips.slice(0, i).map((c) => c.start + c.duration));
+        if (clips[i].start - end > 0.5 / FL.fps()) {
+          const a = FL.closeGap({ trackId: tr.id, start: end, end: clips[i].start });
+          if (a > 0) { total += a; done = true; }
+        }
+      }
+      if (done) break;
+    }
+    if (!done) break;
+  }
+  return total;
 };
 
 FL.deleteClip = (id, ripple = false) => {

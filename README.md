@@ -1,162 +1,248 @@
-# Freemiere Pro — ম্যাকের জন্য ভিডিও এডিটর
+<div align="center">
 
-Premiere Pro-এর মতো কাজের ধারায় বানানো ভিডিও এডিটর। বাঁয়ে Project / Effects / Essential Graphics, মাঝে Program আর Source মনিটর, ডানে Effect Controls, নিচে একাধিক সিকোয়েন্সের মাল্টি-ট্র্যাক টাইমলাইন আর অডিও মিটার। Electron আর FFmpeg দিয়ে তৈরি, এক্সপোর্ট হয় H.264 MP4।
+<img src="build/icon.png" width="112" alt="Freemiere Pro icon">
 
-## চালানোর নিয়ম
+# Freemiere Pro
 
-ম্যাকে **Node.js** লাগবে। Terminal-এ:
+**A free, Premiere-style video editor for macOS.**
+
+Dockable panels, a real Source monitor, linked video and audio, effects, transitions,<br>
+keyframes and broadcast graphics, rendered to H.264 with FFmpeg.
+
+[![Latest release](https://img.shields.io/github/v/release/niruvai/freemiere-pro?label=release&color=4c8dff)](https://github.com/niruvai/freemiere-pro/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/niruvai/freemiere-pro/total?color=3ddc84)](https://github.com/niruvai/freemiere-pro/releases)
+![macOS 11+](https://img.shields.io/badge/macOS-11%2B-lightgrey?logo=apple)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+[**Download for Apple silicon**](https://github.com/niruvai/freemiere-pro/releases/latest/download/Freemiere-Pro-arm64.dmg) · [**Download for Intel**](https://github.com/niruvai/freemiere-pro/releases/latest/download/Freemiere-Pro-x64.dmg) · [All releases](https://github.com/niruvai/freemiere-pro/releases) · [বাংলা নির্দেশিকা](#বাংলা-নির্দেশিকা)
+
+<br>
+
+<img src="docs/screenshot-editing.png" alt="Freemiere Pro — Editing workspace" width="100%">
+
+</div>
+
+---
+
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Updating](#updating)
+- [Getting started](#getting-started)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Building from source](#building-from-source)
+- [Publishing a release](#publishing-a-release)
+- [Project structure](#project-structure)
+- [Known limitations](#known-limitations)
+- [বাংলা নির্দেশিকা](#বাংলা-নির্দেশিকা)
+- [License](#license)
+
+## Features
+
+### Workspace
+- **Dockable panels.** Project, Source, Program, Effect Controls, Effects, Essential Graphics, Markers, Timeline and Audio Meters can each be dragged anywhere:
+  - drop a tab in the middle of another panel to group them;
+  - drop it on any edge to dock it beside that panel;
+  - ⌘-drag it to float it as its own window.
+- **Workspaces:** Editing, Effects, Assembly, Audio, Graphics and Classic. Each one remembers your layout until you choose **Reset to Saved Layout**.
+- **Focused-panel shortcuts.** The panel you click gets a blue outline and receives the keyboard, just like Premiere. Press `` ` `` to maximize it.
+
+### Source monitor
+- Set In and Out with `I` / `O`, by dragging the range handles, or by typing a time (`2`, `1:30`, `00:00:05:00`).
+- Choose whether to take the **video, the audio, or both**.
+- Send the clip to the timeline with **Insert** (`,`) or **Overwrite** (`.`), or drag it there. **Drag Video Only** and **Drag Audio Only** handles take a single side.
+- **Source patching** (the blue V1 / A1 indicators) decides which tracks Insert and Overwrite use.
+- Drop a clip on the Program monitor to choose **Insert**, **Overwrite**, **Overlay** or **Append at End**.
+
+### Timeline
+- Multiple sequences, unlimited video and audio tracks, track lock, output, mute and solo.
+- Tools: Selection (`V`), Track Select Forward (`A`), Ripple (`B`), Rolling (`N`), Rate Stretch (`R`), Razor (`C`), Slip (`Y`).
+- **Linked clips.** Video and its sound are placed as linked V and A clips that move, trim and cut together.
+  - Option-click selects one side; ⌘L links or unlinks.
+  - A red badge shows how many frames a pair is out of sync.
+- **Gaps:** click empty space to select a gap and press Delete to close it, or use **Sequence → Close Gaps**.
+- Add Edit (⌘K), Ripple Trim to Playhead (Q / W), Lift / Extract, In/Out, markers, snapping, multi-select, ⌥-drag to duplicate, copy / paste / paste attributes, and 200 levels of undo.
+
+### Effects & motion
+- **Motion, Opacity, Volume and Pan** with keyframes (stopwatch, previous/next keyframe, linear, ease or hold).
+- In the Program monitor:
+  - drag inside a clip to move it;
+  - drag a **handle to scale**, or **just outside a corner to rotate** (Shift snaps).
+- **Video effects:** Lumetri Color (exposure, contrast, temperature, tint, saturation, faded film) with eight looks, Black & White, Gaussian Blur, Sharpen, Mosaic, Vignette, Crop, Flip and Ultra Key. Most effects accept **ellipse or rectangle masks** for blurring faces and number plates.
+- **Adjustment layers** and color mattes.
+- **Transitions:** Cross Dissolve, Dip to Black/White, Push, Wipe, Iris, Clock Wipe and Cross Zoom, plus Constant Power, Constant Gain and Exponential audio crossfades. ⌘D applies the default.
+
+### Audio
+- Live Web Audio mixing with volume up to 400 %, pan, EQ, high/low-pass, compressor, gain and DeNoise (applied on export).
+- Presets: Voice Clean-up, Background Music (−12 dB), Phone / Radio Voice, Loud & Punchy.
+- Master meters with peak hold and clip indicators.
+
+### Graphics
+- **Essential Graphics templates:** News Headline Bar, Scrolling Ticker, Lower Third, Breaking News, Live Bug and Caption Box.
+- Every text, color, font and position is editable. Bangla and other complex scripts render correctly.
+- Titles with any font, stroke, shadow and background box.
+
+### Export
+- H.264 MP4 or MOV with AAC audio, at any sequence size (1080p, 4K, vertical 9:16, square, 4:5…) and frame rate.
+- Export the whole sequence or its In/Out range; **Export Frame** saves a PNG.
+- Preview and export share one rendering model, so titles, graphics, effects, masks and transitions look the same in both.
+
+<img src="docs/screenshot-effects.png" alt="Effects workspace with Effect Controls for a linked clip" width="100%">
+
+## Installation
+
+1. Download the DMG for your Mac from the [latest release](https://github.com/niruvai/freemiere-pro/releases/latest):
+
+   | Your Mac | Download |
+   |---|---|
+   | Apple silicon (M1, M2, M3, M4…) | [Freemiere-Pro-arm64.dmg](https://github.com/niruvai/freemiere-pro/releases/latest/download/Freemiere-Pro-arm64.dmg) |
+   | Intel | [Freemiere-Pro-x64.dmg](https://github.com/niruvai/freemiere-pro/releases/latest/download/Freemiere-Pro-x64.dmg) |
+
+   Not sure which one you need? Open  menu → **About This Mac** and look at **Chip** or **Processor**.
+2. Open the DMG and drag **Freemiere Pro** into **Applications**.
+3. **First launch.** Freemiere Pro is not notarized by Apple, so macOS asks for confirmation once:
+   - Control-click the app in Applications and choose **Open**, or
+   - try to open it, then go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+   If macOS reports that the app "is damaged", remove the download quarantine and open it again:
+
+   ```bash
+   xattr -cr "/Applications/Freemiere Pro.app"
+   ```
+
+FFmpeg is bundled with the app, so nothing else needs to be installed.
+
+## Updating
+
+Freemiere Pro checks for a new release when it starts and every six hours. You can also choose **Freemiere Pro → Check for Updates…**.
+
+- **Install and Restart** downloads the build for your Mac, replaces the app in Applications and reopens it.
+- **Download DMG** opens the download if you prefer to install by hand.
+- **Skip this version** stops reminders until the next release.
+
+Automatic installation needs the app to be in a folder you can write to, such as Applications, and not running from the DMG.
+
+## Getting started
+
+1. **Import** media (⌘I) or drop files onto the window.
+2. Double-click a clip in **Project** to open it in **Source**. Mark In/Out and pick Video and/or Audio.
+3. Press `.` to overwrite at the playhead or `,` to insert, or drag the picture onto a track.
+4. Trim with the tools, add effects from **Effects**, and graphics from **Essential Graphics**.
+5. Select a clip to adjust it in **Effect Controls**, or move, scale and rotate it directly in **Program**.
+6. **Export** (⌘M) and choose the size, frame rate and quality.
+
+Projects are saved as `.fpproj` files. Media stays where it is on disk.
+
+## Keyboard shortcuts
+
+| Action | Shortcut |
+|---|---|
+| Play / Stop · Shuttle | Space · J K L |
+| Step one / five frames | ← → · ⇧← ⇧→ |
+| Previous / next edit point | ↑ ↓ |
+| Tools | V A B N R C Y |
+| Add Edit · to all tracks | ⌘K · ⇧⌘K |
+| Ripple trim previous / next edit to playhead | Q · W |
+| Clear · Ripple Delete (clips or a selected gap) | ⌫ · ⇧⌫ |
+| Default video / audio transition | ⌘D · ⇧⌘D |
+| Link / Unlink · select one side | ⌘L · ⌥-click |
+| Mark In / Out · go to · clear | I O · ⇧I ⇧O · ⌥X |
+| Lift / Extract | ; · ' |
+| Insert / Overwrite from Source | , · . |
+| Insert while dragging | hold ⌘ on drop |
+| Add marker · next / previous | M · ⇧M / ⌥⇧M |
+| Snapping | S |
+| Zoom in / out / to sequence | = · − · \ |
+| Maximize panel | ` |
+| Open panels | ⇧1 Project · ⇧2 Source · ⇧3 Timeline · ⇧4 Program · ⇧5 Effect Controls · ⇧6 Meters · ⇧7 Effects |
+| New sequence / project | ⌘N · ⌥⌘N |
+| Import · Export media · Export frame | ⌘I · ⌘M · ⇧⌘E |
+| Undo / Redo | ⌘Z · ⇧⌘Z |
+
+The full list is in **Help → Keyboard Shortcuts**.
+
+## Building from source
+
+Requirements: macOS 11 or later, [Node.js](https://nodejs.org) 18 or later, and Git (`xcode-select --install`).
 
 ```bash
-git clone https://github.com/niruvai/freemiere-pro
+git clone https://github.com/niruvai/freemiere-pro.git
 cd freemiere-pro
 npm install
-npm start
+npm start          # run from source
+npm run dist       # build dist/Freemiere-Pro-<arch>.dmg and .zip
 ```
 
-`npm start` প্রতিবার চালু হওয়ার আগে দেখে নেয় Electron আর FFmpeg ঠিকমতো বসেছে কিনা। না বসলে নিজেই ডাউনলোড করে নেয়। তাই npm-এর নতুন ভার্সন install script বন্ধ রাখলেও (`Electron failed to install correctly` error) এখন আর কিছু করতে হবে না। চাইলে আলাদাভাবে `npm run setup` চালানো যায়।
+`npm start` and `npm run dist` first make sure the Electron runtime and FFmpeg binaries are installed. Newer npm versions can skip dependency install scripts; this check handles that case. Run `npm run setup` to do it on its own.
 
-### আসল ম্যাক অ্যাপ (.dmg)
+## Publishing a release
 
-```bash
-npm run dist
-```
+Releases are built by [GitHub Actions](.github/workflows/release.yml) on macOS runners, for both Apple silicon and Intel.
 
-`dist/` ফোল্ডারে DMG তৈরি হবে। অ্যাপটা Apple-এ সাইন করা নয়, তাই প্রথমবার Applications-এ Freemiere Pro-এ রাইট-ক্লিক করে **Open** চাপুন। (না খুললে `xattr -cr "/Applications/Freemiere Pro.app"`।)
+1. Bump `version` in `package.json` and add a section for it to [CHANGELOG.md](CHANGELOG.md).
+2. Commit, then tag and push:
 
-## Premiere-এর যে সুবিধাগুলো আছে
+   ```bash
+   git tag v2.3.0
+   git push origin main v2.3.0
+   ```
 
-**প্রজেক্ট ও সিকোয়েন্স**
-- একাধিক সিকোয়েন্স, টাইমলাইনের ওপরে ট্যাবে (নতুন, ডুপ্লিকেট, রিনেম, ডিলিট)
-- Sequence Settings: 1080p, 4K, 720p, Vertical (Reels/Shorts), Square, 4:5 বা কাস্টম; 23.976–60 fps
-- Clip থেকে নতুন সিকোয়েন্স (ক্লিপের সাইজ আর fps মিলিয়ে)
-- পুরনো (1.x) প্রজেক্ট ফাইল নিজে থেকেই নতুন ফরম্যাটে খোলে
+3. The workflow builds `Freemiere-Pro-arm64` and `Freemiere-Pro-x64` (DMG + ZIP) and publishes a GitHub Release. The release notes come from the changelog. Installed copies of the app pick the new release up automatically.
 
-**প্যানেল যেখানে খুশি রাখা (Premiere-এর মতো ডকিং)**
-- যেকোনো প্যানেলের ট্যাব (Project, Source, Program, Effect Controls, Effects, Essential Graphics, Markers, Timeline, Audio Meters) টেনে নিয়ে যান:
-  - অন্য প্যানেলের **মাঝখানে বা ট্যাবের সারিতে** ছাড়লে → সেখানে ট্যাব হিসেবে যোগ হয়
-  - অন্য প্যানেলের **বাঁ/ডান/ওপর/নিচের কিনারায়** ছাড়লে → তার পাশে আলাদা জায়গা নেয় (নীল ঘর দেখায় কোথায় বসবে)
-  - **⌘ চেপে** টানলে → আলাদা ভাসমান উইন্ডো হয়ে যায়
-- প্যানেলের মাঝের দাগ টেনে সাইজ বদলান; `` ` `` চাপলে প্যানেল বড় হয়/আগের মতো হয়
-- ট্যাবের ≡ মেনু: Close, Undock, Maximize; বন্ধ প্যানেল আবার আনতে Window মেনু বা ⇧1–⇧7
-- ওপরে Workspace: Editing, Effects, Assembly, Audio, Graphics, Classic — আপনার সাজানো লেআউট মনে থাকে; ⋯ মেনু থেকে "Reset to Saved Layout"
-- যে প্যানেলে ক্লিক করবেন সেটা নীল বর্ডারে focused হয়, কিবোর্ড শর্টকাট সেই প্যানেলেই কাজ করে (যেমন Source focused থাকলে Space/I/O Source-এ)
-
-**Source মনিটর — কতটুকু কাটবেন, ভিডিও নাকি অডিও নেবেন**
-- Project-এ ক্লিপে ডাবল-ক্লিক করলে (বা Source-এ টেনে আনলে) Source মনিটরে খোলে
-- In/Out ঠিক করার চারটা উপায়: `I`/`O` চাপা; [ ] বাটন; নিচের নীল দাগের দুই মাথা টানা; অথবা **In / Out / Duration ঘরে সময় লিখে দেওয়া** (যেমন `2`, `1:30`, `00:00:05:00`)
-- **Video ☑ / Audio ☑** টিক দিয়ে বেছে নিন শুধু ছবি, শুধু শব্দ, নাকি দুটোই নেবেন
-- টাইমলাইনে আনার উপায়:
-  - **Insert** (`,`) — প্লেহেডে ঢোকায়, পরের ক্লিপগুলো ডানে সরে যায়
-  - **Overwrite** (`.`) — প্লেহেডে বসায়, নিচে যা ছিল তার ওপরে
-  - ছবিটা টেনে টাইমলাইনের যেকোনো ট্র্যাকে ছাড়ুন (⌘ চেপে ছাড়লে Insert)
-  - নিচের 🎞 আইকন টানলে **শুধু ভিডিও**, 〰 আইকন টানলে **শুধু অডিও**
-  - Program মনিটরে টেনে আনলে Insert / Overwrite / Overlay / Append at End বেছে নেওয়ার ঘর দেখায়
-- **Source patching**: টাইমলাইনের বাঁ পাশের নীল **V1 / A1** লেবেল দেখায় Insert/Overwrite কোন ট্র্যাকে যাবে। অন্য ট্র্যাকের খালি ঘরে ক্লিক করলে সেখানে সরে যায়; জ্বলা লেবেলে ক্লিক করলে বন্ধ হয়
-- প্রতিটা ক্লিপের In/Out মনে থাকে, প্রজেক্টে সেভ হয়
-
-**Linked ভিডিও + অডিও**
-- শব্দসহ ভিডিও টাইমলাইনে দিলে Premiere-এর মতো দুটো ক্লিপ হয়: ছবি V ট্র্যাকে, শব্দ A ট্র্যাকে (নামের পাশে [V] / [A]), দুটো একসাথে linked
-- ক্লিক করলে দুটোই সিলেক্ট হয়; সরানো, ট্রিম, কাটা (Razor/⌘K), Slip, Rate Stretch দুটোতেই একসাথে হয়
-- **⌥-ক্লিক** করলে শুধু একটা দিক; টুলবারের 🔗 বাটনে Linked Selection চালু/বন্ধ
-- **⌘L** দিয়ে Link / Unlink; আলাদা হয়ে sync নষ্ট হলে লাল সংখ্যা দেখায় কত ফ্রেম সরে গেছে
-- Effect Controls-এ linked জোড়া সিলেক্ট থাকলে Video আর Audio দুই অংশই একসাথে দেখায়
-
-**টাইমলাইন টুল (Premiere-এর একই শর্টকাট)**
-- Selection (V), Track Select Forward (A), Ripple Edit (B), Rolling Edit (N), Rate Stretch (R), Razor (C), Slip (Y)
-- একাধিক ক্লিপ সিলেক্ট (Shift-ক্লিক বা খালি জায়গায় টেনে মার্কি), একসাথে সরানো
-- Option-টেনে ডুপ্লিকেট, ⌘-টেনে কিনারা ধরলে ripple trim
-- Add Edit (⌘K / ⇧⌘K), Q/W ripple trim, Lift (;) / Extract (')
-- In/Out (I, O, ⌥X), মার্কার (M; নাম আর রং বদলানো যায়), স্ন্যাপিং (S)
-- ট্র্যাক লক, আউটপুট অন/অফ, অডিও Mute/Solo, ট্র্যাকের নাম বদল
-- Copy/Paste, Paste Attributes (⌥⌘V), Undo/Redo (২০০ ধাপ)
-
-**Effect Controls ও কীফ্রেম**
-- Motion (Position, Scale, Rotation), Opacity, Volume, Panner — প্রতিটির পাশে স্টপওয়াচ দিয়ে কীফ্রেম অ্যানিমেশন, আগের/পরের কীফ্রেমে যাওয়া
-- মনিটরে ক্লিপ সরাসরি টেনে সরানো (কীফ্রেম চালু থাকলে কীফ্রেম বসে)
-- Speed / Duration, Fade in/out
-
-**ইফেক্ট (Effects প্যানেল থেকে ক্লিপে টেনে আনুন)**
-- Lumetri Color (Exposure, Contrast, Temperature, Tint, Saturation, Faded Film) + ৮টি রেডি Look
-- Black & White, Gaussian Blur, Sharpen, Mosaic, Vignette, Crop, Horizontal/Vertical Flip, Ultra Key (গ্রিন স্ক্রিন)
-- **মাস্ক**: Blur/Mosaic/Lumetri ইত্যাদি শুধু একটা ডিম্বাকার বা চতুর্ভুজ জায়গায় — মুখ বা নাম্বার প্লেট ঝাপসা করার জন্য। মনিটরে টেনে মাস্ক সরানো যায়, feather আর invert আছে
-- **Adjustment Layer**: এর ইফেক্ট নিচের সব ট্র্যাকে প্রয়োগ হয়
-- Color Matte
-
-**ট্রানজিশন**
-- ভিডিও: Cross Dissolve, Dip to Black/White, Push (৪ দিক), Wipe (৪ দিক), Iris Round, Clock Wipe, Cross Zoom
-- অডিও: Constant Power, Constant Gain, Exponential Fade
-- ⌘D দিলে Cross Dissolve, ⇧⌘D দিলে অডিও crossfade; ট্রানজিশনে ক্লিক করে ধরন আর সময় বদলানো
-
-**অডিও**
-- Web Audio দিয়ে লাইভ প্রিভিউ: ভলিউম ৪০০% পর্যন্ত, Panner, Simple EQ, Highpass/Lowpass, Compressor, Gain
-- DeNoise (এক্সপোর্টে প্রয়োগ হয়)
-- প্রিসেট: Voice Clean-up, Background Music (−12 dB), Phone/Radio Voice, Loud & Punchy
-- মাস্টার অডিও মিটার (dB স্কেল, পিক হোল্ড, ক্লিপ ইন্ডিকেটর)
-- Link / Unlink (⌘L) — পুরনো প্রজেক্টের ভিডিওর শব্দ আলাদা অডিও ট্র্যাকে নামিয়ে দেয়
-
-**Essential Graphics (নিউজ টেমপ্লেট)**
-- News Headline Bar (লাল "শিরোনাম" লেবেল + সাদা বার)
-- Scrolling Ticker (চলমান খবর, প্রতি লাইনে একটা খবর, গতি বদলানো যায়)
-- Lower Third (নাম + পদবি), Breaking News ব্যানার, Live Bug (LIVE + চ্যানেলের নাম), Caption Box
-- সব লেখা, রং, ফন্ট (বাংলা ফন্টসহ) আর অবস্থান Effect Controls থেকে বদলানো যায়
-- সাধারণ Title (⌘T): ফন্ট, সাইজ, স্ট্রোক, শ্যাডো, ব্যাকগ্রাউন্ড বক্স
-
-**এক্সপোর্ট**
-- Export Media (⌘M): পুরো সিকোয়েন্স বা শুধু In/Out অংশ, ফ্রেম সাইজ, fps, কোয়ালিটি, যেকোনো সিকোয়েন্স
-- Export Frame (⇧⌘E): বর্তমান ফ্রেম PNG হিসেবে সেভ হয়ে প্রজেক্টেও যোগ হয়
-- প্রিভিউ আর এক্সপোর্ট একই হিসাব ব্যবহার করে, তাই টাইটেল, গ্রাফিক্স, ইফেক্ট, মাস্ক আর ট্রানজিশন প্রিভিউতে যেমন দেখেন এক্সপোর্টেও তেমনই আসে
-
-## কিবোর্ড শর্টকাট (সংক্ষেপে)
-
-| কাজ | শর্টকাট |
-|---|---|
-| প্লে / স্টপ | Space, K / L |
-| এক ফ্রেম / পাঁচ ফ্রেম | ← → / ⇧← ⇧→ |
-| আগের / পরের কাট | ↑ / ↓ |
-| টুল | V A B N R C Y |
-| Add Edit | ⌘K (সব ট্র্যাকে ⇧⌘K) |
-| Ripple trim আগের / পরের কাট | Q / W |
-| Clear / Ripple Delete | ⌫ / ⇧⌫ |
-| Cross Dissolve / অডিও crossfade | ⌘D / ⇧⌘D |
-| Link / Unlink ভিডিও-অডিও | ⌘L |
-| linked ক্লিপের শুধু এক দিক সিলেক্ট | ⌥-ক্লিক |
-| প্যানেল বড়/ছোট | ` |
-| প্যানেল খোলা (Project, Source, Timeline, Program, Effect Controls, Meters, Effects) | ⇧1 … ⇧7 |
-| In / Out / মুছুন | I / O / ⌥X |
-| Lift / Extract | ; / ' |
-| মার্কার / পরের মার্কার | M / ⇧M |
-| Source থেকে Insert / Overwrite | , / . |
-| টেনে ছাড়ার সময় Insert | ⌘ চেপে রাখুন |
-| স্ন্যাপিং | S |
-| জুম / ফিট | = − / \ |
-| নতুন সিকোয়েন্স / নতুন প্রজেক্ট | ⌘N / ⌥⌘N |
-| এক্সপোর্ট / ফ্রেম এক্সপোর্ট | ⌘M / ⇧⌘E |
-
-পুরো তালিকা অ্যাপের Help → Keyboard Shortcuts-এ।
-
-## ফোল্ডার কাঠামো
+## Project structure
 
 ```
-scripts/setup.js        Electron/FFmpeg ঠিকমতো বসানো নিশ্চিত করে
-src/main.js             উইন্ডো, মেনু, ফাইল ডায়ালগ, মিডিয়া সার্ভার, FFmpeg কাজ
-src/export.js           সিকোয়েন্স → একটা FFmpeg কমান্ড (overlay, xfade, কীফ্রেম, মাস্ক, amix)
-src/shared/defs.js      ইফেক্ট, ট্রানজিশন, লুক, গ্রাফিক্স টেমপ্লেট, কীফ্রেম গণিত (প্রিভিউ ও এক্সপোর্ট দুজনেই ব্যবহার করে)
-src/renderer/js/
-  core.js               প্রজেক্ট, সিকোয়েন্স, সিলেকশন, undo, এডিট অপারেশন
-  render.js             টাইটেল, গ্রাফিক্স, ইফেক্ট, মাস্ক, ট্রানজিশন আঁকা
-  audio.js              Web Audio ইঞ্জিন ও মিটার
-  preview.js            প্লেব্যাক ও কম্পোজিটর
-  timeline.js           টাইমলাইন ও সব এডিটিং টুল
-  inspector.js          Effect Controls
-  panels.js             Effects, Essential Graphics, Markers, Source মনিটর, Program-এর drop zone
-  dock.js               প্যানেল ডকিং, ভাসমান প্যানেল, workspace
-  dnd.js                অ্যাপের ভেতরের টেনে-ছাড়া (মিডিয়া, ইফেক্ট, গ্রাফিক্স)
-  app.js                কমান্ড, শর্টকাট, সেভ/ওপেন, এক্সপোর্ট
+build/                 App icon and the packaging hook (ad-hoc code signing)
+scripts/setup.js       Makes sure Electron and FFmpeg are installed
+src/main.js            Window, menus, dialogs, media server, FFmpeg jobs
+src/updater.js         Update checks and self-install from GitHub Releases
+src/export.js          Sequence → a single FFmpeg filter graph
+src/shared/defs.js     Effects, transitions, looks, graphics templates, keyframe maths
+src/renderer/
+  index.html           Panels and dialogs
+  js/core.js           Project model, sequences, selection, linking, gaps, undo
+  js/render.js         Titles, graphics, effects, masks and transitions
+  js/preview.js        Playback, compositor, on-screen transform handles
+  js/audio.js          Web Audio engine and meters
+  js/timeline.js       Timeline and editing tools
+  js/inspector.js      Effect Controls
+  js/panels.js         Source monitor, Effects, Essential Graphics, Markers
+  js/dock.js           Panel docking and workspaces
+  js/dnd.js            In-app drag and drop
+  js/app.js            Commands, shortcuts, import, save/open, export dialog
 ```
 
-## সীমাবদ্ধতা
+## Known limitations
 
-- ইফেক্টের প্যারামিটার (যেমন Blur-এর মান) কীফ্রেম করা যায় না; Motion, Opacity, Volume আর Pan করা যায়।
-- নেস্টেড সিকোয়েন্স, মাল্টিক্যাম, LUT ফাইল আর সাবটাইটেল (.srt) এখনো নেই।
-- DeNoise শুধু এক্সপোর্টে শোনা যায়।
-- অনেক ট্রানজিশন আর ইফেক্ট থাকলে এক্সপোর্টে বেশি সময় লাগে।
+- The app is not signed with an Apple Developer ID, so macOS asks for confirmation on first launch.
+- Effect parameters such as blur amount can't be keyframed yet. Motion, opacity, volume and pan can.
+- Not yet supported: nested sequences, multicam, LUT files and subtitle (.srt) import.
+- DeNoise is heard in the exported file, not in live preview.
+- Long sequences with many transitions and effects take longer to export.
+
+Found a bug or have an idea? [Open an issue](https://github.com/niruvai/freemiere-pro/issues).
+
+## বাংলা নির্দেশিকা
+
+**ইনস্টল**
+1. ওপরের লিংক থেকে আপনার ম্যাকের DMG নামান: Apple M1/M2/M3/M4 হলে **arm64**, Intel হলে **x64**।
+2. DMG খুলে **Freemiere Pro**-কে **Applications**-এ টেনে দিন।
+3. প্রথমবার খুলতে অ্যাপে রাইট-ক্লিক করে **Open** চাপুন। অথবা **System Settings → Privacy & Security → Open Anyway** চাপুন। "damaged" লেখা এলে Terminal-এ চালান: `xattr -cr "/Applications/Freemiere Pro.app"`
+
+**আপডেট**
+নতুন ভার্সন এলে অ্যাপ নিজেই জানাবে। **Install and Restart** চাপলে নিজে থেকে আপডেট হয়ে আবার খুলবে। হাতে দেখতে চাইলে **Freemiere Pro → Check for Updates…**।
+
+**মূল কাজ**
+- **প্যানেল সাজানো:** ট্যাব টেনে অন্য প্যানেলের মাঝে ছাড়লে একসাথে ট্যাব হয়। কিনারায় ছাড়লে পাশে বসে। ⌘ চেপে টানলে আলাদা ভাসমান উইন্ডো হয়।
+- **Source থেকে কাটা:**
+  - Project-এ ডাবল-ক্লিক করুন, তারপর `I` / `O` চেপে বা In/Out ঘরে সময় লিখে অংশ ঠিক করুন।
+  - **Video / Audio** টিক দিয়ে বেছে নিন কী নেবেন।
+  - **Overwrite** (`.`) বা **Insert** (`,`) চাপুন, অথবা ছবিটা টেনে টাইমলাইনে দিন।
+- **ফাঁকা জায়গা মোছা:** দুই ক্লিপের মাঝের ফাঁকা জায়গায় ক্লিক করে Delete চাপুন। অডিও সহ পরের ক্লিপগুলো সরে এসে ফাঁক বন্ধ হয়। সব ফাঁক একসাথে মুছতে **Sequence → Close Gaps**।
+- **স্কেল ও ঘোরানো:** Program মনিটরে ক্লিপের কোণার বা পাশের সাদা চৌকো টানলে ছোট-বড় হয়। কোণার একটু বাইরে থেকে টানলে ঘোরে। Shift চেপে রাখলে ধাপে ধাপে মাপ মেলে।
+- **ভিডিও-অডিও জোড়া:** ক্লিক করলে দুটোই সিলেক্ট হয়। ⌥-ক্লিকে শুধু একটা। ⌘L দিয়ে জোড়া খোলা বা লাগানো যায়।
+
+## License
+
+[MIT](LICENSE) © 2026 Nurunnabi Islam. FFmpeg is bundled under the LGPL/GPL via [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static).

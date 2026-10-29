@@ -262,8 +262,10 @@
     tctx.setTransform(1, 0, 0, 1, 0, 0);
   };
 
+  // the clip whose picture is being edited (for a linked pair, the video half)
+  const visualSel = () => { const p = FL.selected(); return p && FL.isVisual(p) ? p : FL.selectedClips().find(FL.isVisual) || p; };
   function drawOverlay(t) {
-    const sel = FL.selected();
+    const sel = visualSel();
     if (FL.playing || !sel || !FL.isVisual(sel) || sel.type === 'adjust') return;
     if (t < sel.start || t >= sel.start + sel.duration) return;
     const tr = FL.track(sel.trackId);
@@ -283,9 +285,18 @@
     ctx.setLineDash([8 / k / mo.s, 5 / k / mo.s]);
     ctx.strokeRect(-bw / 2, -bh / 2, bw, bh);
     ctx.setLineDash([]);
-    const hs = 7 / k / mo.s;
+    const hs = 9 / k / mo.s;
     ctx.fillStyle = '#fff';
-    for (const [hx, hy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) ctx.fillRect(hx * bw / 2 - hs / 2, hy * bh / 2 - hs / 2, hs, hs);
+    ctx.strokeStyle = '#2b5fd9';
+    ctx.lineWidth = 1.2 / k / mo.s;
+    for (const [hx, hy] of HANDLES) {
+      ctx.fillRect((hx * bw) / 2 - hs / 2, (hy * bh) / 2 - hs / 2, hs, hs);
+      ctx.strokeRect((hx * bw) / 2 - hs / 2, (hy * bh) / 2 - hs / 2, hs, hs);
+    }
+    // centre point
+    ctx.beginPath();
+    ctx.arc(0, 0, 4 / k / mo.s, 0, Math.PI * 2);
+    ctx.stroke();
     // mask outline
     const me = FL.maskEdit && FL.maskEdit.clipId === sel.id && (sel.effects || []).find((e) => e.id === FL.maskEdit.fxId);
     if (me && me.mask) {
@@ -360,14 +371,99 @@
     return out; // topmost first
   }
 
+  // ---------------------------------------------------------------- scale & rotate handles
+  const HANDLES = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
+  function geometry(c) {
+    const u = FL.localTime(c);
+    const mo = R.motion(c, u);
+    const { bw, bh } = R.baseSize(c);
+    const { width: W, height: H } = FL.S();
+    const cx = W / 2 + mo.x;
+    const cy = H / 2 + mo.y;
+    const a = (mo.r * Math.PI) / 180;
+    const pt = (lx, ly) => ({ x: cx + (lx * Math.cos(a) - ly * Math.sin(a)) * mo.s, y: cy + (lx * Math.sin(a) + ly * Math.cos(a)) * mo.s });
+    return { u, mo, cx, cy, handles: HANDLES.map(([hx, hy]) => ({ hx, hy, p: pt((hx * bw) / 2, (hy * bh) / 2) })) };
+  }
+  // What the pointer is over on the selected clip: a scale handle, the rotate zone, or nothing.
+  function handleAt(c, p) {
+    if (!c || !FL.isVisual(c) || c.type === 'adjust' || FL.isLocked(c)) return null;
+    if (FL.time < c.start || FL.time >= c.start + c.duration) return null;
+    const tr = FL.track(c.trackId);
+    if (!tr || tr.hidden) return null;
+    const g = geometry(c);
+    const d = (h) => Math.hypot(h.p.x - p.x, h.p.y - p.y);
+    for (const h of g.handles) if (d(h) <= 9 * p.k) return { kind: 'scale', h, g };
+    if (!hit(c, p)) for (const h of g.handles) if (h.hx && h.hy && d(h) <= 30 * p.k) return { kind: 'rotate', h, g };
+    return null;
+  }
+  const ROTATE_CURSOR = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M19 12a7 7 0 1 1-2.05-4.95' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/><path d='M19 12a7 7 0 1 1-2.05-4.95' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/><path d='M20 3v5h-5' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><path d='M20 3v5h-5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>") 12 12, crosshair`;
+  function cursorFor(hd) {
+    if (!hd) return '';
+    if (hd.kind === 'rotate') return ROTATE_CURSOR;
+    // pick the resize arrow that best matches the handle direction on screen
+    const ang = ((Math.atan2(hd.h.p.y - hd.g.cy, hd.h.p.x - hd.g.cx) * 180) / Math.PI + 180) % 180;
+    if (ang < 22.5 || ang >= 157.5) return 'ew-resize';
+    if (ang < 67.5) return 'nwse-resize';
+    if (ang < 112.5) return 'ns-resize';
+    return 'nesw-resize';
+  }
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.buttons) return;
+    const p = toSeq(e);
+    const sel = visualSel();
+    const hd = handleAt(sel, p);
+    canvas.style.cursor = hd ? cursorFor(hd) : sel && FL.isVisual(sel) && visibleAt(FL.time).includes(sel) && hit(sel, p) ? 'move' : '';
+  });
+
+  function transformDrag(e, c, hd) {
+    const p0 = toSeq(e);
+    const { g } = hd;
+    const u = g.u;
+    const s0 = g.mo.s;
+    const r0 = g.mo.r;
+    const d0 = Math.max(1, Math.hypot(p0.x - g.cx, p0.y - g.cy));
+    const a0 = Math.atan2(p0.y - g.cy, p0.x - g.cx);
+    let moved = false;
+    canvas.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const q = toSeq(ev);
+      if (!moved) { FL.pushUndo(); moved = true; }
+      if (hd.kind === 'scale') {
+        let sc = (s0 * Math.hypot(q.x - g.cx, q.y - g.cy)) / d0;
+        sc = ev.shiftKey ? Math.round(sc * 20) / 20 : Math.round(sc * 1000) / 1000;
+        FL.setProp(c, 'scale', FL.clamp(sc, 0.01, 10), u);
+        FL.toast(`Scale ${Math.round(FL.kfValue(c, 'scale', u) * 100)}%`, 700);
+      } else {
+        let r = r0 + ((Math.atan2(q.y - g.cy, q.x - g.cx) - a0) * 180) / Math.PI;
+        r = ev.shiftKey ? Math.round(r / 15) * 15 : Math.round(r * 10) / 10;
+        FL.setProp(c, 'rotation', r, u);
+        FL.toast(`Rotation ${FL.kfValue(c, 'rotation', u)}°`, 700);
+      }
+      needsDraw = true;
+      FL.emit('inspector-refresh');
+    };
+    const up = () => {
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      if (moved) FL.changed({ source: 'monitor' });
+    };
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+  }
+
   canvas.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     const p = toSeq(e);
-    let target = FL.selected();
+    if (!FL.maskEdit) {
+      const sel = visualSel();
+      const hd = handleAt(sel, p);
+      if (hd) { transformDrag(e, sel, hd); return; }
+    }
+    let target = visualSel();
     const vis = visibleAt(FL.time);
     if (!(target && vis.includes(target) && hit(target, p))) target = vis.find((c) => hit(c, p));
     if (!target) { if (!FL.maskEdit) FL.select(null); return; }
-    if (target.id !== FL.selectedId) FL.select(target.id);
+    if (!FL.sel.has(target.id)) FL.select(target.id);
     if (FL.isLocked(target)) return;
     const u = FL.localTime(target);
     const fx = FL.maskEdit && FL.maskEdit.clipId === target.id && (target.effects || []).find((x) => x.id === FL.maskEdit.fxId && x.mask);

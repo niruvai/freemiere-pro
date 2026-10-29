@@ -197,7 +197,7 @@
       const html = clips.map(clipHTML).join('') + clips.map((c) => (tr.kind === 'video' ? transBlock(c, 'video') : '') + (FL.hasAudio(c) ? transBlock(c, 'audio') : '')).join('');
       return `<div class="track-row ${tr.kind} ${tr.locked ? 'locked' : ''} ${tr.hidden ? 'hidden-track' : ''} ${tr.muted ? 'muted-track' : ''}" data-track="${tr.id}">
         ${trackHead(tr)}
-        <div class="lane" data-track="${tr.id}" style="width:${cw}px">${html}</div>
+        <div class="lane" data-track="${tr.id}" style="width:${cw}px">${html}${FL.selGap && FL.selGap.trackId === tr.id ? `<div class="gap-sel" style="left:${timeToX(FL.selGap.start)}px;width:${Math.max(2, timeToX(FL.selGap.end - FL.selGap.start))}px" title="Gap ${FL.timecode(FL.selGap.end - FL.selGap.start)} — press Delete to close it"><span>${FL.timecode(FL.selGap.end - FL.selGap.start)}</span></div>` : ''}</div>
       </div>`;
     }).join('');
     const firstAudio = tracksEl.querySelector('.track-row.audio');
@@ -682,9 +682,17 @@
       FL.sel = new Set([...base, ...ids]);
       tracksEl.querySelectorAll('.clip').forEach((n) => n.classList.toggle('selected', FL.sel.has(n.dataset.id)));
     };
+    const row = e.target.closest('.track-row');
+    const clickT = Math.max(0, xToTime(laneX(e.clientX)));
     startDrag(onMove, () => {
       marquee.hidden = true;
-      if (!moved) { FL.select(null); render(); return; }
+      if (!moved) {
+        // a plain click on empty space selects the gap there (Delete then closes it)
+        const gap = row && FL.gapAt(row.dataset.track, clickT);
+        if (gap) FL.selectGap(gap); else FL.select(null);
+        render();
+        return;
+      }
       FL.selectMany([...FL.sel]);
       render();
     }, 'marquee');
@@ -772,9 +780,13 @@
       ].filter((i) => i.sep || i.label));
     } else if (row) {
       const tr = FL.track(row.dataset.track);
+      const gap = e.target.closest('.lane') ? FL.gapAt(tr.id, Math.max(0, xToTime(laneX(e.clientX)))) : null;
+      if (gap) { FL.selectGap(gap); render(); }
       const isEmpty = !FL.seq().clips.some((c) => c.trackId === tr.id);
       const sameKind = FL.seq().tracks.filter((t) => t.kind === tr.kind).length;
       FL.showMenu(e.clientX, e.clientY, [
+        ...(gap ? [{ label: `Ripple Delete (close ${FL.timecode(gap.end - gap.start)} gap)`, key: '⌫', act: () => FL.cmd('delete') }, { sep: true }] : []),
+        { label: 'Close All Gaps', act: () => FL.cmd('closeGaps') },
         { label: 'Paste at Playhead', key: '⌘V', act: () => FL.cmd('paste', tr.id), disabled: !FL.clipboard },
         { label: `Add ${tr.kind === 'video' ? 'Video' : 'Audio'} Track`, act: () => FL.cmd(tr.kind === 'video' ? 'addVideoTrack' : 'addAudioTrack') },
         { label: 'Rename Track…', act: () => { const r = row.querySelector('.track-name').getBoundingClientRect(); FL.promptInline(r.left, r.top, 110, tr.name, (v) => { if (v) { FL.pushUndo(); tr.name = v; FL.changed(); } }); } },
