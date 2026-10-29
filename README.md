@@ -31,9 +31,35 @@ npm run dist
 - Clip থেকে নতুন সিকোয়েন্স (ক্লিপের সাইজ আর fps মিলিয়ে)
 - পুরনো (1.x) প্রজেক্ট ফাইল নিজে থেকেই নতুন ফরম্যাটে খোলে
 
-**Source মনিটর**
-- Project-এ ক্লিপে ডাবল-ক্লিক করলে Source মনিটরে খোলে
-- I/O দিয়ে In/Out মার্ক, `,` Insert, `.` Overwrite, অথবা ছবি টেনে টাইমলাইনে
+**প্যানেল যেখানে খুশি রাখা (Premiere-এর মতো ডকিং)**
+- যেকোনো প্যানেলের ট্যাব (Project, Source, Program, Effect Controls, Effects, Essential Graphics, Markers, Timeline, Audio Meters) টেনে নিয়ে যান:
+  - অন্য প্যানেলের **মাঝখানে বা ট্যাবের সারিতে** ছাড়লে → সেখানে ট্যাব হিসেবে যোগ হয়
+  - অন্য প্যানেলের **বাঁ/ডান/ওপর/নিচের কিনারায়** ছাড়লে → তার পাশে আলাদা জায়গা নেয় (নীল ঘর দেখায় কোথায় বসবে)
+  - **⌘ চেপে** টানলে → আলাদা ভাসমান উইন্ডো হয়ে যায়
+- প্যানেলের মাঝের দাগ টেনে সাইজ বদলান; `` ` `` চাপলে প্যানেল বড় হয়/আগের মতো হয়
+- ট্যাবের ≡ মেনু: Close, Undock, Maximize; বন্ধ প্যানেল আবার আনতে Window মেনু বা ⇧1–⇧7
+- ওপরে Workspace: Editing, Effects, Assembly, Audio, Graphics, Classic — আপনার সাজানো লেআউট মনে থাকে; ⋯ মেনু থেকে "Reset to Saved Layout"
+- যে প্যানেলে ক্লিক করবেন সেটা নীল বর্ডারে focused হয়, কিবোর্ড শর্টকাট সেই প্যানেলেই কাজ করে (যেমন Source focused থাকলে Space/I/O Source-এ)
+
+**Source মনিটর — কতটুকু কাটবেন, ভিডিও নাকি অডিও নেবেন**
+- Project-এ ক্লিপে ডাবল-ক্লিক করলে (বা Source-এ টেনে আনলে) Source মনিটরে খোলে
+- In/Out ঠিক করার চারটা উপায়: `I`/`O` চাপা; [ ] বাটন; নিচের নীল দাগের দুই মাথা টানা; অথবা **In / Out / Duration ঘরে সময় লিখে দেওয়া** (যেমন `2`, `1:30`, `00:00:05:00`)
+- **Video ☑ / Audio ☑** টিক দিয়ে বেছে নিন শুধু ছবি, শুধু শব্দ, নাকি দুটোই নেবেন
+- টাইমলাইনে আনার উপায়:
+  - **Insert** (`,`) — প্লেহেডে ঢোকায়, পরের ক্লিপগুলো ডানে সরে যায়
+  - **Overwrite** (`.`) — প্লেহেডে বসায়, নিচে যা ছিল তার ওপরে
+  - ছবিটা টেনে টাইমলাইনের যেকোনো ট্র্যাকে ছাড়ুন (⌘ চেপে ছাড়লে Insert)
+  - নিচের 🎞 আইকন টানলে **শুধু ভিডিও**, 〰 আইকন টানলে **শুধু অডিও**
+  - Program মনিটরে টেনে আনলে Insert / Overwrite / Overlay / Append at End বেছে নেওয়ার ঘর দেখায়
+- **Source patching**: টাইমলাইনের বাঁ পাশের নীল **V1 / A1** লেবেল দেখায় Insert/Overwrite কোন ট্র্যাকে যাবে। অন্য ট্র্যাকের খালি ঘরে ক্লিক করলে সেখানে সরে যায়; জ্বলা লেবেলে ক্লিক করলে বন্ধ হয়
+- প্রতিটা ক্লিপের In/Out মনে থাকে, প্রজেক্টে সেভ হয়
+
+**Linked ভিডিও + অডিও**
+- শব্দসহ ভিডিও টাইমলাইনে দিলে Premiere-এর মতো দুটো ক্লিপ হয়: ছবি V ট্র্যাকে, শব্দ A ট্র্যাকে (নামের পাশে [V] / [A]), দুটো একসাথে linked
+- ক্লিক করলে দুটোই সিলেক্ট হয়; সরানো, ট্রিম, কাটা (Razor/⌘K), Slip, Rate Stretch দুটোতেই একসাথে হয়
+- **⌥-ক্লিক** করলে শুধু একটা দিক; টুলবারের 🔗 বাটনে Linked Selection চালু/বন্ধ
+- **⌘L** দিয়ে Link / Unlink; আলাদা হয়ে sync নষ্ট হলে লাল সংখ্যা দেখায় কত ফ্রেম সরে গেছে
+- Effect Controls-এ linked জোড়া সিলেক্ট থাকলে Video আর Audio দুই অংশই একসাথে দেখায়
 
 **টাইমলাইন টুল (Premiere-এর একই শর্টকাট)**
 - Selection (V), Track Select Forward (A), Ripple Edit (B), Rolling Edit (N), Rate Stretch (R), Razor (C), Slip (Y)
@@ -66,7 +92,7 @@ npm run dist
 - DeNoise (এক্সপোর্টে প্রয়োগ হয়)
 - প্রিসেট: Voice Clean-up, Background Music (−12 dB), Phone/Radio Voice, Loud & Punchy
 - মাস্টার অডিও মিটার (dB স্কেল, পিক হোল্ড, ক্লিপ ইন্ডিকেটর)
-- Detach Audio (⌘L)
+- Link / Unlink (⌘L) — পুরনো প্রজেক্টের ভিডিওর শব্দ আলাদা অডিও ট্র্যাকে নামিয়ে দেয়
 
 **Essential Graphics (নিউজ টেমপ্লেট)**
 - News Headline Bar (লাল "শিরোনাম" লেবেল + সাদা বার)
@@ -92,10 +118,15 @@ npm run dist
 | Ripple trim আগের / পরের কাট | Q / W |
 | Clear / Ripple Delete | ⌫ / ⇧⌫ |
 | Cross Dissolve / অডিও crossfade | ⌘D / ⇧⌘D |
+| Link / Unlink ভিডিও-অডিও | ⌘L |
+| linked ক্লিপের শুধু এক দিক সিলেক্ট | ⌥-ক্লিক |
+| প্যানেল বড়/ছোট | ` |
+| প্যানেল খোলা (Project, Source, Timeline, Program, Effect Controls, Meters, Effects) | ⇧1 … ⇧7 |
 | In / Out / মুছুন | I / O / ⌥X |
 | Lift / Extract | ; / ' |
 | মার্কার / পরের মার্কার | M / ⇧M |
 | Source থেকে Insert / Overwrite | , / . |
+| টেনে ছাড়ার সময় Insert | ⌘ চেপে রাখুন |
 | স্ন্যাপিং | S |
 | জুম / ফিট | = − / \ |
 | নতুন সিকোয়েন্স / নতুন প্রজেক্ট | ⌘N / ⌥⌘N |
@@ -117,7 +148,9 @@ src/renderer/js/
   preview.js            প্লেব্যাক ও কম্পোজিটর
   timeline.js           টাইমলাইন ও সব এডিটিং টুল
   inspector.js          Effect Controls
-  panels.js             Effects, Essential Graphics, Source মনিটর
+  panels.js             Effects, Essential Graphics, Markers, Source মনিটর, Program-এর drop zone
+  dock.js               প্যানেল ডকিং, ভাসমান প্যানেল, workspace
+  dnd.js                অ্যাপের ভেতরের টেনে-ছাড়া (মিডিয়া, ইফেক্ট, গ্রাফিক্স)
   app.js                কমান্ড, শর্টকাট, সেভ/ওপেন, এক্সপোর্ট
 ```
 

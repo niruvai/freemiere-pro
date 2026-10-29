@@ -6,7 +6,6 @@
 (() => {
   const D = window.FLDefs;
   const root = document.getElementById('inspector');
-  const title = document.getElementById('inspector-title');
   let editing = false;
   const collapsed = {};
   const KFABLE = new Set(D.KF_PROPS);
@@ -39,42 +38,56 @@
   const fontList = () => `<datalist id="font-list">${FL.FONTS.map((f) => `<option value="${f}">`).join('')}</datalist>`;
 
   // ---------------------------------------------------------------- render
+  // ctx.v = clip whose picture is edited, ctx.a = clip whose sound is edited.
+  // For a linked pair these are the two halves; for a single clip both may be the same clip.
+  let ctx = { v: null, a: null };
+  let mode = 'empty';
+  function pairOf(list) {
+    if (list.length !== 2 || !list[0].link || list[0].link !== list[1].link) return null;
+    const v = list.find((x) => FL.isVisual(x));
+    const a = list.find((x) => x.type === 'audio');
+    return v && a ? { v, a } : null;
+  }
   function render() {
-    if (FL.selTrans) return renderTransition();
+    if (FL.selTrans) { mode = 'trans'; return renderTransition(); }
     const many = FL.selectedClips();
-    if (many.length > 1) return renderMany(many);
-    const c = FL.selected();
-    if (!c) return renderEmpty();
+    const pair = pairOf(many);
+    if (many.length > 1 && !pair) { mode = 'many'; return renderMany(many); }
+    const c = pair ? pair.v : FL.selected();
+    if (!c) { mode = 'empty'; return renderEmpty(); }
+    mode = 'clip';
+    ctx = pair || { v: FL.isVisual(c) ? c : null, a: FL.hasAudio(c) ? c : null };
+    const v = ctx.v;
+    const a = ctx.a;
     const m = FL.media(c.mediaId);
-    title.textContent = 'Effect Controls';
-    const typeLabel = { video: 'Video', audio: 'Audio', image: 'Still', text: 'Title', graphic: 'Graphic', adjust: 'Adjustment Layer', solid: 'Color Matte' }[c.type];
+    const typeLabel = pair ? 'Video + Audio (linked)' : { video: 'Video', audio: 'Audio', image: 'Still', text: 'Title', graphic: 'Graphic', adjust: 'Adjustment Layer', solid: 'Color Matte' }[c.type];
     let html = `<div class="clip-card">
-      <div class="clip-card-type ${c.type}">${typeLabel}</div>
+      <div class="clip-card-type ${pair ? 'linked' : c.type}">${typeLabel}</div>
       <div class="clip-card-name" title="${FL.esc(m ? m.path : '')}">${FL.esc(FL.clipName(c))}</div>
-      <div class="clip-card-meta">${FL.esc(FL.track(c.trackId)?.name || '')} · ${FL.timecode(c.start)} – ${FL.timecode(c.start + c.duration)}${m && m.width ? ` · ${m.width}×${m.height}` : ''}</div>
+      <div class="clip-card-meta">${FL.esc(FL.track(c.trackId)?.name || '')}${pair ? ' + ' + FL.esc(FL.track(a.trackId)?.name || '') : ''} · ${FL.timecode(c.start)} – ${FL.timecode(c.start + c.duration)}${m && m.width ? ` · ${m.width}×${m.height}` : ''}</div>
     </div>`;
 
-    if (FL.isVisual(c)) {
-      html += '<div class="group-head">Video</div>';
-      if (c.type === 'text') {
+    if (v) {
+      html += '<div data-t="v"><div class="group-head">Video</div>';
+      if (v.type === 'text') {
         html += section('title', 'Text',
           area('text') + text('Font', 'font', 'font-list') + num('Size', 'size', { min: 8, max: 600, unit: 'px' }) + color('Fill', 'color') +
           `<div class="prop"><span class="sw-pad"></span><label>Style</label><span class="seg">
-            <button class="segbtn ${c.bold ? 'on' : ''}" data-toggle="bold"><b>B</b></button>
-            <button class="segbtn ${c.italic ? 'on' : ''}" data-toggle="italic"><i>I</i></button></span><span class="seg">
-            ${['left', 'center', 'right'].map((a) => `<button class="segbtn ${c.align === a ? 'on' : ''}" data-align="${a}"><i class="ic ic-align-${a}"></i></button>`).join('')}</span></div>` +
+            <button class="segbtn ${v.bold ? 'on' : ''}" data-toggle="bold"><b>B</b></button>
+            <button class="segbtn ${v.italic ? 'on' : ''}" data-toggle="italic"><i>I</i></button></span><span class="seg">
+            ${['left', 'center', 'right'].map((al) => `<button class="segbtn ${v.align === al ? 'on' : ''}" data-align="${al}"><i class="ic ic-align-${al}"></i></button>`).join('')}</span></div>` +
           check('Shadow', 'shadow') + num('Stroke', 'strokeWidth', { min: 0, max: 60, unit: 'px' }) + color('Stroke color', 'strokeColor') +
           check('Background', 'box') + color('Box color', 'boxColor') + num('Box opacity', 'boxOpacity', { min: 0, max: 100, mul: 100, unit: '%', slider: true }));
       }
-      if (c.type === 'graphic') html += section('gfx', `Edit: ${FL.esc(D.GRAPHICS[c.template].name)}`, graphicFields(c));
-      if (c.type === 'solid') html += section('matte', 'Color Matte', color('Color', 'color'));
-      if (c.type !== 'adjust') {
+      if (v.type === 'graphic') html += section('gfx', `Edit: ${FL.esc(D.GRAPHICS[v.template].name)}`, graphicFields(v));
+      if (v.type === 'solid') html += section('matte', 'Color Matte', color('Color', 'color'));
+      if (v.type !== 'adjust') {
         html += section('motion', 'Motion',
           num('Position X', 'x', { unit: 'px' }) + num('Position Y', 'y', { unit: 'px' }) +
           num('Scale', 'scale', { min: 0, max: 1000, mul: 100, unit: '%', slider: true }) +
           num('Rotation', 'rotation', { min: -3600, max: 3600, unit: '°' }) +
           `<div class="prop-actions">
-            ${c.type === 'video' || c.type === 'image' ? '<button class="btn small" data-do="fit">Fit</button><button class="btn small" data-do="fill">Fill frame</button>' : '<button class="btn small" data-do="center">Center</button>'}
+            ${v.type === 'video' || v.type === 'image' ? '<button class="btn small" data-do="fit">Fit</button><button class="btn small" data-do="fill">Fill frame</button>' : '<button class="btn small" data-do="center">Center</button>'}
             <button class="btn small ghost" data-do="resetMotion">Reset</button>
           </div>`,
           `<button class="sec-reset" data-do="resetMotion" title="Reset Motion"><i class="ic ic-reset"></i></button>`);
@@ -82,30 +95,48 @@
       html += section('opacity', 'Opacity',
         num('Opacity', 'opacity', { min: 0, max: 100, mul: 100, unit: '%', slider: true }) +
         num('Fade in', 'fadeIn', { min: 0, step: 0.1, unit: 's', dec: 2 }) + num('Fade out', 'fadeOut', { min: 0, step: 0.1, unit: 's', dec: 2 }));
+      html += '</div>';
     }
-    html += section('time', 'Time',
+    html += `<div data-t="b">${section('time', 'Time',
       num('Duration', 'duration', { min: 0.04, step: 0.1, unit: 's', dec: 2 }) +
-      (c.type === 'video' || c.type === 'audio' ? num('Speed', 'speed', { min: 10, max: 1000, step: 5, mul: 100, unit: '%' }) : ''));
-    html += effectSections(c, 'video');
-    if (FL.isVisual(c)) html += `<div class="add-fx"><button class="btn small" data-addfx="video">+ Video Effect</button><button class="btn small ghost" data-addfx="look">Lumetri Look ▾</button></div>`;
+      (c.type === 'video' || c.type === 'audio' ? num('Speed', 'speed', { min: 10, max: 1000, step: 5, mul: 100, unit: '%' }) : '') +
+      (pair ? '<p class="hint">Applies to both the video and its linked audio.</p>' : ''))}</div>`;
+    if (v) {
+      html += effectSections(v, 'video');
+      html += `<div class="add-fx"><button class="btn small" data-addfx="video">+ Video Effect</button><button class="btn small ghost" data-addfx="look">Lumetri Look ▾</button></div>`;
+    }
 
-    if (FL.hasAudio(c)) {
-      html += '<div class="group-head">Audio</div>';
+    if (a) {
+      html += '<div data-t="a"><div class="group-head">Audio</div>';
       html += section('volume', 'Volume',
-        num('Level', 'volume', { min: 0, max: 400, mul: 100, unit: '%', slider: true }) + check('Mute clip', 'muted'));
+        num('Level', 'volume', { min: 0, max: 400, mul: 100, unit: '%', slider: true }) + check('Mute clip', 'muted') +
+        (a === v ? '' : num('Fade in', 'fadeIn', { min: 0, step: 0.1, unit: 's', dec: 2 }) + num('Fade out', 'fadeOut', { min: 0, step: 0.1, unit: 's', dec: 2 })));
       html += section('panner', 'Panner', num('Balance', 'pan', { min: -100, max: 100, mul: 100, slider: true }));
-      html += effectSections(c, 'audio');
+      html += '</div>';
+      html += effectSections(a, 'audio');
       html += `<div class="add-fx"><button class="btn small" data-addfx="audio">+ Audio Effect</button><button class="btn small ghost" data-addfx="apreset">Preset ▾</button></div>`;
     }
 
+    const linked = many.some((x) => x.link);
     html += `<div class="clip-actions">
       <button class="btn small" data-do="split">Add Edit</button>
       <button class="btn small" data-do="duplicate">Duplicate</button>
-      ${c.type === 'video' && m && m.hasAudio && !c.muted ? '<button class="btn small" data-do="detachAudio">Detach Audio</button>' : ''}
+      ${linked ? '<button class="btn small" data-do="toggleLink">Unlink</button>' : c.type === 'video' && FL.hasAudio(c) ? '<button class="btn small" data-do="toggleLink">Unlink Audio</button>' : ''}
       <button class="btn small danger" data-do="delete">Delete</button>
     </div>`;
     root.innerHTML = html + fontList();
     refresh();
+  }
+  // Which clip(s) a property row edits.
+  function ownerOf(fxId) { return [ctx.v, ctx.a].find((c) => c && (c.effects || []).some((e) => e.id === fxId)) || null; }
+  function clipsFor(el) {
+    const key = (el && el.dataset && el.dataset.key) || '';
+    if (key.startsWith('fx:') || key.startsWith('mask:')) { const o = ownerOf(key.split(':')[1]); return o ? [o] : []; }
+    const scope = el && el.closest('[data-t]');
+    const t = scope ? scope.dataset.t : 'v';
+    if (t === 'a') return [ctx.a || ctx.v].filter(Boolean);
+    if (t === 'b') return [...new Set([ctx.v, ctx.a].filter(Boolean))];
+    return [ctx.v || ctx.a].filter(Boolean);
   }
 
   function graphicFields(c) {
@@ -168,7 +199,6 @@
   }
 
   function renderEmpty() {
-    title.textContent = 'Effect Controls';
     const seq = FL.seq();
     root.innerHTML = `<div class="empty-state">
         <p class="muted">(no clip selected)</p>
@@ -188,7 +218,6 @@
   }
 
   function renderMany(list) {
-    title.textContent = 'Effect Controls';
     root.innerHTML = `<div class="empty-state"><div class="clip-card"><div class="clip-card-type seq">Selection</div>
       <div class="clip-card-name">${list.length} clips selected</div>
       <div class="clip-card-meta">Drop an effect on any of them to apply it to all.</div></div>
@@ -208,7 +237,6 @@
     if (!tr) { FL.selTrans = null; return renderEmpty(); }
     const defs = audio ? D.AUDIO_TRANSITIONS : D.VIDEO_TRANSITIONS;
     const pair = side === 'in' && FL.prevAdj(c);
-    title.textContent = 'Effect Controls';
     root.innerHTML = `<div class="clip-card"><div class="clip-card-type ${audio ? 'audio' : 'video'}">${audio ? 'Audio' : 'Video'} Transition</div>
         <div class="clip-card-name">${FL.esc((defs[tr.type] || {}).name || tr.type)}</div>
         <div class="clip-card-meta">${pair ? 'Center at cut' : side === 'in' ? 'Start of clip' : 'End of clip'} · ${FL.esc(FL.clipName(c))}</div></div>
@@ -255,11 +283,12 @@
   }
 
   function refresh() {
-    const c = FL.selected();
-    if (!c || FL.selTrans || FL.sel.size > 1) return;
-    const u = FL.localTime(c);
+    if (mode !== 'clip' || !ctx.v && !ctx.a) return;
     root.querySelectorAll('.prop[data-key]').forEach((p) => {
       const key = p.dataset.key;
+      const c = clipsFor(p)[0];
+      if (!c) return;
+      const u = FL.localTime(c);
       const v = getVal(c, key);
       const kind = p.dataset.kind;
       if (kind === 'num') {
@@ -285,9 +314,11 @@
   function commit() {
     if (!editing) return;
     editing = false;
-    const c = FL.selected();
-    if (c) {
-      FL.overwrite(c.trackId, c.start, c.start + c.duration, c.id);
+    const list = [...new Set([ctx.v, ctx.a].filter(Boolean))];
+    const ids = list.map((c) => c.id);
+    for (const c of list) {
+      if (!FL.clip(c.id)) continue;
+      FL.overwrite(c.trackId, c.start, c.start + c.duration, ids);
       if (c.fadeIn + c.fadeOut > c.duration) { const k = c.duration / (c.fadeIn + c.fadeOut); c.fadeIn *= k; c.fadeOut *= k; }
     }
     FL.changed({ source: 'inspector' });
@@ -299,18 +330,18 @@
 
   root.addEventListener('input', (e) => {
     const p = e.target.closest('.prop[data-key]');
-    const c = FL.selected();
-    if (!p || !c) return;
+    const targets = p ? clipsFor(p) : [];
+    if (!targets.length) return;
     begin();
     const kind = p.dataset.kind;
     const key = p.dataset.key;
     if (kind === 'num') {
       const raw = parseFloat(e.target.value);
       if (Number.isNaN(raw)) return;
-      setVal(c, key, FL.clamp(raw, +p.dataset.min, +p.dataset.max) / +p.dataset.mul);
+      targets.forEach((c) => setVal(c, key, FL.clamp(raw, +p.dataset.min, +p.dataset.max) / +p.dataset.mul));
       p.querySelectorAll('input').forEach((inp) => { if (inp !== e.target) inp.value = raw; });
-    } else if (kind === 'check') { setVal(c, key, e.target.checked); live(key); commit(); return; }
-    else setVal(c, key, e.target.value);
+    } else if (kind === 'check') { targets.forEach((c) => setVal(c, key, e.target.checked)); live(key); commit(); return; }
+    else targets.forEach((c) => setVal(c, key, e.target.value));
     live(key);
   });
   root.addEventListener('change', (e) => { if (e.target.closest('.prop[data-key]')) commit(); });
@@ -323,7 +354,8 @@
       collapsed[sec.dataset.sec] = sec.classList.contains('collapsed');
       return;
     }
-    const c = FL.selected();
+    const row = e.target.closest('.prop');
+    const c = (row && clipsFor(row)[0]) || ctx.v || ctx.a || null;
     const sw = e.target.closest('[data-sw]');
     if (sw && c) {
       const prop = sw.dataset.sw;
@@ -351,11 +383,15 @@
       return;
     }
     const fxBtn = e.target.closest('[data-fx-act]');
-    if (fxBtn && c) return fxAction(c, fxBtn.dataset.fxAct, fxBtn.dataset.fx, fxBtn);
+    if (fxBtn) { const o = ownerOf(fxBtn.dataset.fx); if (o) fxAction(o, fxBtn.dataset.fxAct, fxBtn.dataset.fx, fxBtn); return; }
     const add = e.target.closest('[data-addfx]');
-    if (add && c) return addFxMenu(c, add.dataset.addfx, add);
+    if (add) { const k = add.dataset.addfx; const o = k === 'audio' || k === 'apreset' ? ctx.a : ctx.v; if (o) addFxMenu(o, k, add); return; }
     const btn = e.target.closest('[data-do],[data-toggle],[data-align]');
     if (!btn) return;
+    if (mode !== 'clip') return FL.cmd(btn.dataset.do === 'deleteTransition' ? 'delete' : btn.dataset.do);
+    const vc = ctx.v;
+    if (btn.dataset.toggle && vc) { FL.pushUndo(); vc[btn.dataset.toggle] = !vc[btn.dataset.toggle]; return FL.changed(); }
+    if (btn.dataset.align && vc) { FL.pushUndo(); vc.align = btn.dataset.align; return FL.changed(); }
     if (btn.dataset.toggle && c) { FL.pushUndo(); c[btn.dataset.toggle] = !c[btn.dataset.toggle]; return FL.changed(); }
     if (btn.dataset.align && c) { FL.pushUndo(); c.align = btn.dataset.align; return FL.changed(); }
     const act = btn.dataset.do;
@@ -363,9 +399,9 @@
     if (!c) return FL.cmd(act);
     const { width: W, height: H } = FL.S();
     const m = FL.media(c.mediaId);
-    if (act === 'fit') { FL.pushUndo(); c.scale = 1; c.x = 0; c.y = 0; delete c.kf.scale; delete c.kf.x; delete c.kf.y; return FL.changed(); }
+    if (act === 'fit' && vc) { const c = vc; FL.pushUndo(); c.scale = 1; c.x = 0; c.y = 0; delete c.kf.scale; delete c.kf.x; delete c.kf.y; return FL.changed(); }
     if (act === 'fill' && m) return FL.cmd('fill');
-    if (act === 'center') { FL.pushUndo(); c.x = 0; c.y = 0; delete c.kf.x; delete c.kf.y; return FL.changed(); }
+    if (act === 'center' && vc) { const c = vc; FL.pushUndo(); c.x = 0; c.y = 0; delete c.kf.x; delete c.kf.y; return FL.changed(); }
     FL.cmd(act);
   });
 
@@ -407,7 +443,8 @@
     const lab = e.target.closest('label.scrub');
     if (!lab) return;
     const p = lab.closest('.prop');
-    const c = FL.selected();
+    const targets = clipsFor(p);
+    const c = targets[0];
     if (!c) return;
     e.preventDefault();
     const x0 = e.clientX;
@@ -422,7 +459,7 @@
       if (!moved) { begin(); moved = true; }
       const factor = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1;
       const v = FL.clamp(start + Math.round(dx) * step * factor, +p.dataset.min, +p.dataset.max);
-      setVal(c, p.dataset.key, v / mul);
+      targets.forEach((t) => setVal(t, p.dataset.key, v / mul));
       refresh();
       live(p.dataset.key);
     };
@@ -435,13 +472,17 @@
     lab.addEventListener('pointerup', up);
   });
 
-  // effects dropped on the panel go to the selected clips
-  root.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('application/x-fl-fx') && FL.selected()) e.preventDefault(); });
-  root.addEventListener('drop', (e) => {
-    const raw = e.dataTransfer.getData('application/x-fl-fx');
-    if (!raw || !FL.selected()) return;
-    e.preventDefault();
-    FL.applyFxItem(JSON.parse(raw), FL.selectedClips());
+  // effects dropped on Effect Controls go to the selected clips
+  FL.dnd.target({
+    match: (el, p) => p.kind === 'fx' && !!el.closest('.pc[data-panel="effectcontrols"]'),
+    over: () => {
+      const n = FL.selectedClips().length;
+      FL.dnd.hint(n ? `Apply to ${n} selected clip${n > 1 ? 's' : ''}` : 'Select a clip first');
+      if (n) root.classList.add('drop-hot');
+      return n ? {} : null;
+    },
+    drop: (p) => FL.applyFxItem(p.item, FL.selectedClips()),
+    leave: () => root.classList.remove('drop-hot'),
   });
 
   FL.renderInspector = render;

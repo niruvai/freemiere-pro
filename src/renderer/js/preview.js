@@ -170,14 +170,15 @@
       const expected = FL.clamp((clip.in || 0) + local * speed, 0, maxT);
       const inside = local >= -head && local < clip.duration + tail;
 
-      if (m.hasAudio) {
+      const withSound = FL.hasAudio(clip);
+      if (withSound) {
         FL.audio.attach(el, clip);
         const audible = FL.playing && local >= -ae.head && local < clip.duration + ae.tail && !clip.muted;
         const u = FL.clamp(local, 0, clip.duration);
         const lvl = audible ? (FL.kfValue(clip, 'volume', u) ?? 1) * FL.fadeFactor(clip, t) * FL.audioWeight(clip, t) : 0;
         FL.audio.set(el, lvl, FL.kfValue(clip, 'pan', u) || 0);
       }
-      el.muted = false;
+      el.muted = !withSound;
       if (el.playbackRate !== speed) { try { el.playbackRate = speed; } catch (_) {} }
 
       const atEnd = expected >= maxT - 0.001 && local > 0;

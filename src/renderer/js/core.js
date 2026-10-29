@@ -15,6 +15,8 @@ const FL = (window.FL = {
   selTrans: null,        // { clipId, side: 'in'|'out', audio: bool }
   tool: 'select',
   snap: true,
+  linkSel: true,         // Premiere's "Linked Selection"
+  focusPanel: 'timeline',
   pxPerSec: 60,
   clipboard: null,
   undoStack: [],
@@ -71,6 +73,7 @@ FL.migrate = (data) => {
   p.version = 2;
   for (const seq of p.sequences) {
     seq.markers = seq.markers || [];
+    seq.patch = seq.patch || null;
     seq.inPoint = seq.inPoint ?? null;
     seq.outPoint = seq.outPoint ?? null;
     seq.clips = seq.clips.map((c) => {
@@ -98,6 +101,18 @@ FL.timecode = (t) => {
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}:${pad(f)}`;
 };
+// Accepts 00:01:02:15 (h:m:s:f), 1:02:15, 1:02, plain seconds (12.5) or frames with "f" (90f).
+FL.parseTimecode = (str, fps = FL.fps()) => {
+  const s = String(str || '').trim();
+  if (!s) return null;
+  if (/^[+-]?\d+(\.\d+)?$/.test(s)) return Math.max(0, parseFloat(s));
+  if (/^\d+f$/i.test(s)) return parseInt(s, 10) / fps;
+  const parts = s.split(/[:;.]/).map((x) => parseInt(x, 10));
+  if (parts.some((n) => Number.isNaN(n))) return null;
+  while (parts.length < 4) parts.unshift(0);
+  const [h, m, sec, f] = parts.slice(-4);
+  return Math.max(0, h * 3600 + m * 60 + sec + f / fps);
+};
 FL.duration = (seq = FL.seq()) => seq.clips.reduce((e, c) => Math.max(e, c.start + c.duration), 0);
 
 // ---------------------------------------------------------------- lookups
@@ -112,7 +127,7 @@ FL.kindFor = (clipType) => (clipType === 'audio' ? 'audio' : 'video');
 FL.isVisual = (c) => FL.VISUAL.has(c.type);
 FL.hasAudio = (c) => {
   if (c.type === 'audio') return true;
-  if (c.type !== 'video') return false;
+  if (c.type !== 'video' || c.noAudio) return false;
   const m = FL.media(c.mediaId);
   return !!(m && m.hasAudio);
 };
@@ -160,20 +175,47 @@ FL.aExt = (c) => {
   };
 };
 
+// ---------------------------------------------------------------- linked clips
+// A video with sound is placed as two clips (picture on a V track, sound on an
+// A track) that share a `link` id, exactly like Premiere's linked clips.
+FL.partners = (c) => (c && c.link ? FL.seq().clips.filter((o) => o.link === c.link && o.id !== c.id) : []);
+FL.withPartners = (ids, solo) => {
+  const out = new Set(ids.filter(Boolean));
+  if (FL.linkSel && !solo) for (const id of [...out]) for (const p of FL.partners(FL.clip(id))) out.add(p.id);
+  return [...out];
+};
+// Frames a linked partner has drifted out of sync (0 = in sync).
+FL.syncOffset = (c, p) => Math.round((((c.start - (c.in || 0) / (c.speed || 1)) - (p.start - (p.in || 0) / (p.speed || 1)))) * FL.fps());
+// Gives copied clips fresh link ids (a link survives only when both sides were copied).
+FL.relink = (copies) => {
+  const count = {};
+  copies.forEach((c) => { if (c.link) count[c.link] = (count[c.link] || 0) + 1; });
+  const map = {};
+  copies.forEach((c) => {
+    if (!c.link) return;
+    const old = c.link;
+    c.link = count[old] > 1 ? (map[old] = map[old] || FL.uid('lnk')) : null;
+  });
+  return copies;
+};
+
 // ---------------------------------------------------------------- selection
+// opts.solo (Option-click) selects only one side of a linked pair.
 FL.select = (id, opts = {}) => {
   FL.selTrans = null;
+  const group = id ? FL.withPartners([id], opts.solo) : [];
   if (!id) { FL.sel.clear(); FL.selectedId = null; }
   else if (opts.toggle) {
-    if (FL.sel.has(id)) { FL.sel.delete(id); if (FL.selectedId === id) FL.selectedId = [...FL.sel].pop() || null; }
-    else { FL.sel.add(id); FL.selectedId = id; }
-  } else if (opts.add) { FL.sel.add(id); FL.selectedId = id; }
-  else if (!(opts.keep && FL.sel.has(id))) { FL.sel = new Set([id]); FL.selectedId = id; }
+    if (FL.sel.has(id)) { group.forEach((g) => FL.sel.delete(g)); if (!FL.sel.has(FL.selectedId)) FL.selectedId = [...FL.sel].pop() || null; }
+    else { group.forEach((g) => FL.sel.add(g)); FL.selectedId = id; }
+  } else if (opts.add) { group.forEach((g) => FL.sel.add(g)); FL.selectedId = id; }
+  else if (!(opts.keep && FL.sel.has(id))) { FL.sel = new Set(group); FL.selectedId = id; }
   else FL.selectedId = id;
   FL.emit('select', FL.selectedId);
 };
-FL.selectMany = (ids) => {
+FL.selectMany = (ids, solo) => {
   FL.selTrans = null;
+  ids = FL.withPartners(ids, solo);
   FL.sel = new Set(ids);
   FL.selectedId = ids[ids.length - 1] || null;
   FL.emit('select', FL.selectedId);
@@ -263,6 +305,8 @@ FL.makeClip = (props) => Object.assign({
   transOut: null,
   atransIn: null,
   atransOut: null,
+  link: null,
+  noAudio: false,
 }, props);
 
 FL.makeEffect = (type, params = {}) => {
@@ -305,6 +349,41 @@ FL.clipFromMedia = (media, trackKind) => {
   if (media.type === 'image') return FL.makeClip({ type: 'image', mediaId: media.id, duration: 5 });
   if (media.type === 'audio' || trackKind === 'audio') return FL.makeClip({ type: 'audio', mediaId: media.id, duration: media.duration });
   return FL.makeClip({ type: 'video', mediaId: media.id, duration: media.duration });
+};
+
+// Clips for a media item. part: 'both' | 'video' | 'audio'.
+FL.clipsFromMedia = (media, part = 'both', range = null) => {
+  const out = [];
+  const dur = range && media.type !== 'image' ? Math.max(FL.MIN_CLIP, range.out - range.in) : media.type === 'image' ? 5 : media.duration;
+  const inP = range && media.type !== 'image' ? range.in : 0;
+  if (media.type === 'image') { if (part !== 'audio') out.push(FL.makeClip({ type: 'image', mediaId: media.id, duration: dur })); return out; }
+  if (media.type === 'audio') { if (part !== 'video') out.push(FL.makeClip({ type: 'audio', mediaId: media.id, duration: dur, in: inP })); return out; }
+  if (part !== 'audio') out.push(FL.makeClip({ type: 'video', mediaId: media.id, duration: dur, in: inP, noAudio: true }));
+  if (part !== 'video' && media.hasAudio) out.push(FL.makeClip({ type: 'audio', mediaId: media.id, duration: dur, in: inP }));
+  if (out.length === 2) { const link = FL.uid('lnk'); out.forEach((c) => { c.link = link; }); }
+  return out;
+};
+
+// Tracks numbered like Premiere: V1 is the bottom video track, A1 the top audio track.
+FL.vTracks = () => FL.seq().tracks.filter((t) => t.kind === 'video').reverse();
+FL.aTracks = () => FL.seq().tracks.filter((t) => t.kind === 'audio');
+FL.trackIndex = (t) => (t.kind === 'video' ? FL.vTracks() : FL.aTracks()).indexOf(t);
+// The matching track of the other kind (V2 <-> A2), created if it doesn't exist.
+FL.pairTrack = (t, create = true) => {
+  const kind = t.kind === 'video' ? 'audio' : 'video';
+  const idx = FL.trackIndex(t);
+  let list = kind === 'video' ? FL.vTracks() : FL.aTracks();
+  while (create && list.length <= idx) { FL.addTrack(kind); list = kind === 'video' ? FL.vTracks() : FL.aTracks(); }
+  return list[Math.min(idx, list.length - 1)] || null;
+};
+
+// Source patching: which V and A track Insert/Overwrite use, and whether each is on.
+FL.patch = () => {
+  const seq = FL.seq();
+  const p = seq.patch || (seq.patch = { v: null, a: null, vOn: true, aOn: true });
+  if (!p.v || !FL.track(p.v)) p.v = (FL.vTracks()[0] || {}).id || null;
+  if (!p.a || !FL.track(p.a)) p.a = (FL.aTracks()[0] || {}).id || null;
+  return p;
 };
 
 // ---------------------------------------------------------------- keyframes
@@ -373,7 +452,7 @@ FL.overwrite = (trackId, start, end, exceptIds) => {
       clips.splice(clips.indexOf(c), 1);
     } else if (cs < start && ce > end) {
       const tail = FL.splitClip(c, end);
-      if (tail) tail.start = end;
+      if (tail) { tail.start = end; tail.link = null; }
       c.duration = start - cs;
       c.transOut = null;
     } else if (cs < start) {
@@ -417,6 +496,19 @@ FL.splitClip = (clip, t) => {
   right.effects = (right.effects || []).map((e) => Object.assign(e, { id: FL.uid('fx') }));
   FL.seq().clips.push(right);
   return right;
+};
+
+// Splits several clips at t; the right-hand pieces of a linked pair stay linked to each other.
+FL.splitClips = (list, t) => {
+  const map = {};
+  const rights = [];
+  for (const c of [...new Set(list)]) {
+    const r = FL.splitClip(c, t);
+    if (!r) continue;
+    if (c.link) r.link = map[c.link] = map[c.link] || FL.uid('lnk');
+    rights.push(r);
+  }
+  return rights;
 };
 
 FL.deleteClip = (id, ripple = false) => {

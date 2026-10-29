@@ -64,7 +64,7 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
   const prevAdj = (c) => clips.find((o) => o.trackId === c.trackId && o.id !== c.id && Math.abs(o.start + o.duration - c.start) < eps) || null;
   const nextAdj = (c) => clips.find((o) => o.trackId === c.trackId && o.id !== c.id && Math.abs(c.start + c.duration - o.start) < eps) || null;
   const isVisual = (c) => ['video', 'image', 'text', 'graphic', 'solid', 'adjust'].includes(c.type);
-  const hasAudio = (c) => c.type === 'audio' || (c.type === 'video' && media[c.mediaId] && media[c.mediaId].hasAudio);
+  const hasAudio = (c) => c.type === 'audio' || (c.type === 'video' && !c.noAudio && media[c.mediaId] && media[c.mediaId].hasAudio);
   const geom = (c) => meta[c.id] || { bw: W, bh: H };
 
   // ------------------------------------------------------------ video effects
@@ -381,7 +381,8 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
     tail = Math.max(0, Math.min(tail, ((m.duration || 0) - (c.in || 0) - c.duration * speed) / speed));
     const L = head + c.duration + tail;
     const idx = addInput(['-ss', num((c.in || 0) - head * speed), '-t', num(L * speed + 0.1), '-i', m.path]);
-    const f = ['aresample=48000', 'aformat=sample_fmts=fltp:channel_layouts=stereo', 'asetpts=PTS-STARTPTS', ...atempo(speed), `apad=whole_dur=${num(L)}`, `atrim=duration=${num(L)}`];
+    // mono sources go to both speakers at full level (FFmpeg's default upmix is 3 dB quieter than the preview)
+    const f = [...(m.channels === 1 ? ['pan=stereo|c0=c0|c1=c0'] : []), 'aresample=48000', 'aformat=sample_fmts=fltp:channel_layouts=stereo', 'asetpts=PTS-STARTPTS', ...atempo(speed), `apad=whole_dur=${num(L)}`, `atrim=duration=${num(L)}`];
     for (const e of c.effects || []) {
       if (!e.enabled || !D.AUDIO_EFFECTS[e.type]) continue;
       const p = e.params;

@@ -137,6 +137,7 @@ async function probe(file) {
     height,
     fps,
     hasAudio: !!a && type !== 'image',
+    channels: a ? a.channels || 2 : 0,
     hasVideo: type !== 'audio',
     videoCodec: v ? v.codec_name : null,
     audioCodec: a ? a.codec_name : null,
@@ -313,7 +314,8 @@ function buildMenu() {
         { label: 'Apply Video Transition', accelerator: 'CmdOrCtrl+D', click: cmd('applyVideoTransition') },
         { label: 'Apply Audio Transition', accelerator: 'Shift+CmdOrCtrl+D', click: cmd('applyAudioTransition') },
         { type: 'separator' },
-        { label: 'Detach Audio', accelerator: 'CmdOrCtrl+L', click: cmd('detachAudio') },
+        { label: 'Link / Unlink', accelerator: 'CmdOrCtrl+L', click: cmd('toggleLink') },
+        { label: 'Linked Selection', click: cmd('toggleLinkSel') },
         { label: 'Enable / Disable Effects', accelerator: 'Shift+E', registerAccelerator: false, click: cmd('toggleFx') },
         { label: 'Scale to Frame Size', click: cmd('fill') },
       ],
@@ -367,11 +369,25 @@ function buildMenu() {
     {
       label: 'Window',
       submenu: [
+        {
+          label: 'Workspaces',
+          submenu: [
+            ...['Editing', 'Effects', 'Assembly', 'Audio', 'Graphics', 'Classic'].map((n, i) => ({ label: n, accelerator: `Alt+Shift+${i + 1}`, click: cmd(`ws:${n}`) })),
+            { type: 'separator' },
+            { label: 'Reset to Saved Layout', accelerator: 'Alt+Shift+0', click: cmd('ws:reset') },
+          ],
+        },
+        { label: 'Maximize / Restore Panel', accelerator: '`', registerAccelerator: false, click: cmd('maximize') },
+        { type: 'separator' },
         { label: 'Project', accelerator: 'Shift+1', registerAccelerator: false, click: cmd('panel:project') },
+        { label: 'Source Monitor', accelerator: 'Shift+2', registerAccelerator: false, click: cmd('panel:source') },
+        { label: 'Timeline', accelerator: 'Shift+3', registerAccelerator: false, click: cmd('panel:timeline') },
+        { label: 'Program Monitor', accelerator: 'Shift+4', registerAccelerator: false, click: cmd('panel:program') },
+        { label: 'Effect Controls', accelerator: 'Shift+5', registerAccelerator: false, click: cmd('panel:effectcontrols') },
+        { label: 'Audio Meters', accelerator: 'Shift+6', registerAccelerator: false, click: cmd('panel:meters') },
         { label: 'Effects', accelerator: 'Shift+7', registerAccelerator: false, click: cmd('panel:effects') },
         { label: 'Essential Graphics', click: cmd('panel:graphics') },
-        { label: 'Source Monitor', accelerator: 'Shift+2', registerAccelerator: false, click: cmd('panel:source') },
-        { label: 'Program Monitor', accelerator: 'Shift+4', registerAccelerator: false, click: cmd('panel:program') },
+        { label: 'Markers', click: cmd('panel:markers') },
         { type: 'separator' },
         { role: 'minimize' },
         { role: 'zoom' },
@@ -480,6 +496,10 @@ ipcMain.handle('export:start', async (_e, job) => {
     const file = path.join(tmp, `asset-${n++}.png`);
     fs.writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
     images[key] = file;
+  }
+  // projects made before channel counts were recorded: look them up now
+  for (const m of job.project.media || []) {
+    if (m.hasAudio && !m.channels) { try { m.channels = (await probe(m.path)).channels; } catch (_) { /* keep default */ } }
   }
   let built;
   try {

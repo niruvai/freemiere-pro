@@ -110,7 +110,14 @@
 
   function trackHead(tr) {
     const isV = tr.kind === 'video';
+    const p = FL.patch();
+    const patched = isV ? p.v === tr.id : p.a === tr.id;
+    const on = patched && (isV ? p.vOn : p.aOn);
+    const src = FL.source && FL.source.media;
+    const relevant = !src || (isV ? src.type !== 'audio' : src.type !== 'image' && src.hasAudio);
     return `<div class="track-head ${tr.kind}">
+      <button class="patch ${patched ? 'set' : ''} ${on ? 'on' : ''} ${relevant ? '' : 'na'}" data-act="patch"
+        title="${patched ? (on ? 'Source patch: Insert/Overwrite send the ' + (isV ? 'picture' : 'sound') + ' here — click to turn off' : 'Source patch is off — click to turn on') : 'Click to send Source ' + (isV ? 'video' : 'audio') + ' to this track'}">${patched ? (isV ? 'V1' : 'A1') : ''}</button>
       <span class="track-btns">
         <button class="hbtn ${tr.locked ? 'on' : ''}" data-act="lock" title="Toggle track lock">${icon(tr.locked ? 'lock' : 'unlock')}</button>
         ${isV ? `<button class="hbtn ${tr.hidden ? 'off' : ''}" data-act="hide" title="Toggle track output">${icon(tr.hidden ? 'eye-off' : 'eye')}</button>` : ''}
@@ -162,6 +169,11 @@
     const kfs = FL.kfTimes(c);
     if (kfs.length && w > 20) layers.push(`<div class="kf-row">${kfs.map((t) => `<span class="kf" style="left:${timeToX(t)}px"></span>`).join('')}</div>`);
     const badges = [];
+    const partners = FL.partners(c);
+    for (const p of partners) {
+      const off = FL.syncOffset(c, p);
+      if (off) { badges.push(`<em class="sync" title="Out of sync with its linked ${p.type === 'audio' ? 'audio' : 'video'} by ${Math.abs(off)} frames">${off > 0 ? '+' : ''}${off}</em>`); break; }
+    }
     const fxCount = (c.effects || []).filter((e) => e.enabled).length;
     if (fxCount) badges.push('<em class="fx">fx</em>');
     if ((c.speed || 1) !== 1) badges.push(`<em>${Math.round(c.speed * 100)}%</em>`);
@@ -170,7 +182,7 @@
     const tIcon = { text: 'text', graphic: 'graphics', adjust: 'adjust', solid: 'matte' }[c.type];
     return `<div class="clip ${c.type} ${FL.sel.has(c.id) ? 'selected' : ''} ${!m && ['video', 'image', 'audio'].includes(c.type) ? 'offline' : ''}" data-id="${c.id}" style="left:${timeToX(c.start)}px;width:${w}px">
       ${layers.join('')}
-      <div class="clip-label">${tIcon ? icon(tIcon) : ''}${badges.filter((b) => b.includes('fx')).join('')}<span>${FL.esc(FL.clipName(c))}</span>${badges.filter((b) => !b.includes('fx')).join('')}</div>
+      <div class="clip-label">${tIcon ? icon(tIcon) : ''}${badges.filter((b) => b.includes('fx')).join('')}<span class="${partners.length ? 'linked' : ''}">${FL.esc(FL.clipName(c))}${partners.length ? (c.type === 'audio' ? ' [A]' : ' [V]') : ''}</span>${badges.filter((b) => !b.includes('fx')).join('')}</div>
       <div class="trim l"></div><div class="trim r"></div>
     </div>`;
   }
@@ -377,6 +389,18 @@
     for (const [prop, list] of Object.entries(orig.kf || {})) c.kf[prop] = list.map((k) => ({ t: +(k.t - by).toFixed(4), v: k.v }));
   }
 
+  // Linked partners that move with a clip (Option-click / Linked Selection off = just the clip).
+  const EPS = () => 0.5 / FL.fps();
+  const linkedGroup = (clip, solo) => (FL.linkSel && !solo ? [clip, ...FL.partners(clip)] : [clip]).filter((c) => c === clip || !FL.isLocked(c));
+  const neighbours = (c) => {
+    const sibs = FL.clipsOn(c.trackId).filter((o) => o.id !== c.id);
+    return {
+      later: sibs.filter((o) => o.start >= c.start + c.duration - 1e-6).map((o) => ({ c: o, start: o.start })),
+      prevEnd: Math.max(0, ...sibs.filter((o) => o.start + o.duration <= c.start + 1e-6).map((o) => o.start + o.duration)),
+      nextStart: Math.min(Infinity, ...sibs.filter((o) => o.start >= c.start + c.duration - 1e-6).map((o) => o.start)),
+    };
+  };
+
   tracksEl.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     if (e.target.closest('.track-head')) return;
@@ -388,44 +412,42 @@
     const clip = FL.clip(clipEl.dataset.id);
     if (!clip) return;
     const tool = FL.tool;
+    const solo = e.altKey;
     const tClick = xToTime(laneX(e.clientX));
 
     if (tool === 'razor') {
+      if (FL.isLocked(clip)) return FL.toast('Track is locked');
       let t = FL.snapToFrame(tClick);
-      if (FL.snap && !e.altKey && Math.abs(t - FL.time) < 6 / FL.pxPerSec) t = FL.time;
-      const targets = e.shiftKey ? FL.seq().clips.filter((c) => t > c.start && t < c.start + c.duration && !FL.isLocked(c)) : [clip];
-      if (targets.some(FL.isLocked)) return FL.toast('Track is locked');
+      if (FL.snap && Math.abs(t - FL.time) < 6 / FL.pxPerSec) t = FL.time;
+      const targets = e.shiftKey ? FL.seq().clips.filter((c) => t > c.start && t < c.start + c.duration && !FL.isLocked(c)) : linkedGroup(clip, solo);
       FL.pushUndo();
-      let any = false;
-      targets.forEach((c) => { if (FL.splitClip(c, t)) any = true; });
-      if (!any) { FL.undoStack.pop(); return; }
+      if (!FL.splitClips(targets, t).length) { FL.undoStack.pop(); return; }
       FL.changed();
       return;
     }
     if (tool === 'trackfwd') {
       const ids = FL.seq().clips.filter((c) => c.start + c.duration > tClick && (!e.shiftKey || c.trackId === clip.trackId)).map((c) => c.id);
-      FL.selectMany(ids);
+      FL.selectMany(ids, true);
       render();
       return moveDrag(e, clip, false);
     }
 
     const edge = e.target.classList.contains('trim') ? (e.target.classList.contains('l') ? 'L' : 'R') : null;
-    if (e.shiftKey && !edge) { FL.select(clip.id, { toggle: true }); render(); return; }
-    FL.select(clip.id, { keep: true });
+    if (e.shiftKey && !edge) { FL.select(clip.id, { toggle: true, solo }); render(); return; }
+    FL.select(clip.id, { keep: !solo, solo });
     render();
     if (FL.isLocked(clip)) return;
 
     if (edge) {
-      if (tool === 'rolling') return rollingDrag(e, clip, edge);
-      if (tool === 'rate') return rateDrag(e, clip, edge);
-      if (tool === 'ripple' || e.metaKey || e.ctrlKey) return trimDrag(e, clip, edge, true);
-      return trimDrag(e, clip, edge, false);
+      if (tool === 'rolling') return rollingDrag(e, clip, edge, solo);
+      if (tool === 'rate') return rateDrag(e, clip, edge, solo);
+      return trimDrag(e, clip, edge, tool === 'ripple' || e.metaKey || e.ctrlKey, solo);
     }
-    if (tool === 'slip') return slipDrag(e, clip);
-    moveDrag(e, clip, e.altKey);
+    if (tool === 'slip') return slipDrag(e, clip, solo);
+    moveDrag(e, clip, solo);
   });
 
-  // move (with Alt = duplicate)
+  // move the selection (Option = duplicate); dragging up/down changes track
   function moveDrag(e, primary, duplicate) {
     const x0 = e.clientX;
     let moving = FL.selectedClips().filter((c) => !FL.isLocked(c));
@@ -434,27 +456,30 @@
     let moved = false;
     const th = 8 / FL.pxPerSec;
     let pts = [];
-    const single = moving.length === 1;
+    const kindP = FL.kindFor(primary.type);
+    const listOf = (kind) => (kind === 'video' ? FL.vTracks() : FL.aTracks());
+    const startIdx = FL.trackIndex(FL.track(primary.trackId));
     const onMove = (ev) => {
       const dx = ev.clientX - x0;
       const tr = laneAt(ev.clientX, ev.clientY);
-      if (!moved && Math.abs(dx) < 3 && !(single && tr && tr.id !== primary.trackId)) return;
+      const vert = tr && tr.kind === kindP && FL.trackIndex(tr) !== startIdx;
+      if (!moved && Math.abs(dx) < 3 && !vert) return;
       if (!moved) {
         FL.pushUndo();
         moved = true;
         if (duplicate) {
-          const copies = moving.map((c) => Object.assign(clone(c), { id: FL.uid('clip') }));
+          const pi = moving.indexOf(primary);
+          const copies = FL.relink(moving.map((c) => Object.assign(clone(c), { id: FL.uid('clip') })));
           FL.seq().clips.push(...copies);
           moving = copies;
           origs = copies.map(clone);
-          primary = copies[0];
-          FL.selectMany(copies.map((c) => c.id));
+          primary = copies[pi];
+          FL.selectMany(copies.map((c) => c.id), true);
         }
         pts = FL.snap ? snapPts(moving.map((c) => c.id)) : [];
       }
       let dt = xToTime(dx);
-      const minStart = Math.min(...origs.map((o) => o.start));
-      dt = Math.max(-minStart, dt);
+      dt = Math.max(-Math.min(...origs.map((o) => o.start)), dt);
       let snapAt = null;
       if (FL.snap && !ev.shiftKey) {
         let best = null;
@@ -467,7 +492,11 @@
         if (best) { dt += best.d; snapAt = best.at; }
       }
       moving.forEach((c, i) => { c.start = Math.max(0, FL.snapToFrame(origs[i].start + dt)); });
-      if (single && tr && tr.kind === FL.kindFor(primary.type) && !tr.locked) primary.trackId = tr.id;
+      // vertical: shift every moving clip of the dragged kind by the same number of tracks
+      const list = listOf(kindP);
+      const d = tr && tr.kind === kindP ? FL.trackIndex(tr) - startIdx : 0;
+      const dest = origs.map((o) => (FL.kindFor(o.type) === kindP ? list[FL.trackIndex(FL.track(o.trackId)) + d] : FL.track(o.trackId)));
+      if (dest.every((t) => t && !t.locked)) moving.forEach((c, i) => { c.trackId = dest[i].id; });
       render();
       showSnap(snapAt);
       FL.requestDraw();
@@ -480,18 +509,15 @@
     }, duplicate ? 'copying' : 'dragging');
   }
 
-  // trim (normal or ripple)
-  function trimDrag(e, clip, edge, ripple) {
+  // trim an edge (ripple = later clips follow); linked partners on the same edge trim too
+  function trimDrag(e, clip, edge, ripple, solo) {
     const x0 = e.clientX;
-    const orig = clone(clip);
-    const speed = clip.speed || 1;
-    const sibs = FL.clipsOn(clip.trackId).filter((c) => c.id !== clip.id);
-    const later = sibs.filter((c) => c.start >= orig.start + orig.duration - 1e-6).map((c) => ({ c, start: c.start }));
-    const prevEnd = Math.max(0, ...sibs.filter((c) => c.start + c.duration <= orig.start + 1e-6).map((c) => c.start + c.duration));
-    const nextStart = Math.min(Infinity, ...sibs.filter((c) => c.start >= orig.start + orig.duration - 1e-6).map((c) => c.start));
-    const pts = FL.snap ? snapPts(clip.id) : [];
+    const at = (c) => (edge === 'L' ? c.start : c.start + c.duration);
+    const group = linkedGroup(clip, solo).filter((c) => Math.abs(at(c) - at(clip)) < EPS());
+    const info = group.map((c) => Object.assign({ c, o: clone(c), speed: c.speed || 1, media: c.type === 'video' || c.type === 'audio' }, neighbours(c)));
+    const po = info[0].o;
+    const pts = FL.snap ? snapPts(group.map((c) => c.id)) : [];
     const th = 8 / FL.pxPerSec;
-    const isMedia = clip.type === 'video' || clip.type === 'audio';
     let moved = false;
     const onMove = (ev) => {
       const dx = ev.clientX - x0;
@@ -500,26 +526,29 @@
       const dt = xToTime(dx);
       let snapAt = null;
       if (edge === 'L') {
-        const end = orig.start + orig.duration;
-        let s = orig.start + dt;
+        let s = po.start + dt;
         if (FL.snap && !ev.shiftKey) { const a = nearest(s, pts); if (a !== null && Math.abs(a - s) < th) { s = a; snapAt = a; } }
-        const minStart = Math.max(ripple ? 0 : prevEnd, isMedia ? orig.start - orig.in / speed : 0, 0);
-        s = FL.clamp(FL.snapToFrame(s), minStart, end - FL.MIN_CLIP);
-        const delta = s - orig.start;
-        clip.in = Math.max(0, orig.in + delta * speed);
-        shiftKfFrom(clip, orig, delta);
-        if (ripple) {
-          clip.start = orig.start;
-          clip.duration = orig.duration - delta;
-          later.forEach((l) => { l.c.start = Math.max(0, l.start - delta); });
-        } else { clip.start = s; clip.duration = end - s; }
+        const lo = Math.max(0, ...info.map((i) => Math.max(ripple ? 0 : i.prevEnd, i.media ? i.o.start - (i.o.in || 0) / i.speed : 0)));
+        const hi = Math.min(...info.map((i) => i.o.start + i.o.duration - FL.MIN_CLIP));
+        s = FL.clamp(FL.snapToFrame(s), lo, hi);
+        const delta = s - po.start;
+        for (const i of info) {
+          i.c.in = Math.max(0, (i.o.in || 0) + delta * i.speed);
+          shiftKfFrom(i.c, i.o, delta);
+          i.c.duration = i.o.duration - delta;
+          if (ripple) { i.c.start = i.o.start; i.later.forEach((l) => { l.c.start = Math.max(0, l.start - delta); }); }
+          else i.c.start = i.o.start + delta;
+        }
       } else {
-        let e2 = orig.start + orig.duration + dt;
+        let e2 = po.start + po.duration + dt;
         if (FL.snap && !ev.shiftKey) { const a = nearest(e2, pts); if (a !== null && Math.abs(a - e2) < th) { e2 = a; snapAt = a; } }
-        const maxEnd = Math.min(ripple ? Infinity : nextStart, orig.start + FL.mediaLimit(orig));
-        e2 = FL.clamp(FL.snapToFrame(e2), orig.start + FL.MIN_CLIP, maxEnd);
-        clip.duration = e2 - orig.start;
-        if (ripple) later.forEach((l) => { l.c.start = Math.max(0, l.start + (clip.duration - orig.duration)); });
+        const hi = Math.min(...info.map((i) => Math.min(ripple ? Infinity : i.nextStart, i.o.start + FL.mediaLimit(i.o))));
+        const lo = Math.max(...info.map((i) => i.o.start + FL.MIN_CLIP));
+        e2 = FL.clamp(FL.snapToFrame(e2), lo, hi);
+        for (const i of info) {
+          i.c.duration = e2 - i.o.start;
+          if (ripple) i.later.forEach((l) => { l.c.start = Math.max(0, l.start + (i.c.duration - i.o.duration)); });
+        }
       }
       render();
       showSnap(snapAt);
@@ -529,61 +558,72 @@
     startDrag(onMove, () => { if (moved) FL.changed(); }, 'trimming');
   }
 
-  // rolling edit between two adjacent clips
-  function rollingDrag(e, clip, edge) {
-    const a = edge === 'R' ? clip : FL.prevAdj(clip);
-    const b = edge === 'R' ? FL.nextAdj(clip) : clip;
-    if (!a || !b) return trimDrag(e, clip, edge, false);
+  // rolling edit: moves the cut between two adjacent clips (on every linked track at that cut)
+  function rollingDrag(e, clip, edge, solo) {
+    const cut = edge === 'R' ? clip.start + clip.duration : clip.start;
+    const pairs = [];
+    for (const m of linkedGroup(clip, solo)) {
+      let a = null; let b = null;
+      if (Math.abs(m.start + m.duration - cut) < EPS()) { a = m; b = FL.nextAdj(m); }
+      else if (Math.abs(m.start - cut) < EPS()) { b = m; a = FL.prevAdj(m); }
+      if (a && b && !FL.isLocked(a) && !FL.isLocked(b)) pairs.push({ a, b, oa: clone(a), ob: clone(b) });
+    }
+    if (!pairs.length) return trimDrag(e, clip, edge, false, solo);
     const x0 = e.clientX;
-    const oa = clone(a);
-    const ob = clone(b);
     let moved = false;
     const onMove = (ev) => {
       const dx = ev.clientX - x0;
       if (!moved && Math.abs(dx) < 2) return;
       if (!moved) { FL.pushUndo(); moved = true; }
       let dt = FL.snapToFrame(xToTime(dx));
-      let lo = -(oa.duration - FL.MIN_CLIP);
-      if (ob.type === 'video' || ob.type === 'audio') lo = Math.max(lo, -(ob.in || 0) / (ob.speed || 1));
-      const hi = Math.min(FL.mediaLimit(oa) - oa.duration, ob.duration - FL.MIN_CLIP);
+      let lo = -Infinity; let hi = Infinity;
+      for (const { oa, ob } of pairs) {
+        lo = Math.max(lo, -(oa.duration - FL.MIN_CLIP));
+        if (ob.type === 'video' || ob.type === 'audio') lo = Math.max(lo, -(ob.in || 0) / (ob.speed || 1));
+        hi = Math.min(hi, FL.mediaLimit(oa) - oa.duration, ob.duration - FL.MIN_CLIP);
+      }
       dt = FL.clamp(dt, lo, hi);
-      a.duration = oa.duration + dt;
-      b.start = ob.start + dt;
-      b.duration = ob.duration - dt;
-      b.in = Math.max(0, (ob.in || 0) + dt * (ob.speed || 1));
-      shiftKfFrom(b, ob, dt);
+      for (const { a, b, oa, ob } of pairs) {
+        a.duration = oa.duration + dt;
+        b.start = ob.start + dt;
+        b.duration = ob.duration - dt;
+        b.in = Math.max(0, (ob.in || 0) + dt * (ob.speed || 1));
+        shiftKfFrom(b, ob, dt);
+      }
       render();
-      showSnap(b.start);
+      showSnap(cut + dt);
       FL.requestDraw();
     };
     startDrag(onMove, () => { if (moved) FL.changed(); }, 'trimming');
   }
 
-  // rate stretch: change duration by changing speed
-  function rateDrag(e, clip, edge) {
-    if (clip.type !== 'video' && clip.type !== 'audio') return trimDrag(e, clip, edge, false);
+  // rate stretch: drag an edge to change speed instead of content
+  function rateDrag(e, clip, edge, solo) {
+    if (clip.type !== 'video' && clip.type !== 'audio') return trimDrag(e, clip, edge, false, solo);
+    const group = linkedGroup(clip, solo).filter((c) => (c.type === 'video' || c.type === 'audio') &&
+      Math.abs(c.start - clip.start) < EPS() && Math.abs(c.duration - clip.duration) < EPS());
+    const info = group.map((c) => Object.assign({ c, o: clone(c), span: c.duration * (c.speed || 1) }, neighbours(c)));
+    const po = info[0].o;
     const x0 = e.clientX;
-    const orig = clone(clip);
-    const sibs = FL.clipsOn(clip.trackId).filter((c) => c.id !== clip.id);
-    const prevEnd = Math.max(0, ...sibs.filter((c) => c.start + c.duration <= orig.start + 1e-6).map((c) => c.start + c.duration));
-    const nextStart = Math.min(Infinity, ...sibs.filter((c) => c.start >= orig.start + orig.duration - 1e-6).map((c) => c.start));
-    const span = orig.duration * (orig.speed || 1);
     let moved = false;
     const onMove = (ev) => {
       const dx = ev.clientX - x0;
       if (!moved && Math.abs(dx) < 2) return;
       if (!moved) { FL.pushUndo(); moved = true; }
       const dt = FL.snapToFrame(xToTime(dx));
-      let dur = edge === 'R' ? orig.duration + dt : orig.duration - dt;
-      dur = FL.clamp(dur, span / 10, span / 0.1);
-      if (edge === 'R') dur = Math.min(dur, nextStart - orig.start);
-      else dur = Math.min(dur, orig.start + orig.duration - prevEnd);
-      clip.duration = dur;
-      clip.speed = span / dur;
-      if (edge === 'L') clip.start = orig.start + orig.duration - dur;
-      const k = orig.duration / dur;
-      clip.kf = {};
-      for (const [p, list] of Object.entries(orig.kf || {})) clip.kf[p] = list.map((kk) => ({ t: +(kk.t / k).toFixed(4), v: kk.v }));
+      let dur = edge === 'R' ? po.duration + dt : po.duration - dt;
+      for (const i of info) {
+        dur = FL.clamp(dur, i.span / 10, i.span / 0.1);
+        dur = Math.min(dur, edge === 'R' ? i.nextStart - i.o.start : i.o.start + i.o.duration - i.prevEnd);
+      }
+      for (const i of info) {
+        i.c.duration = dur;
+        i.c.speed = i.span / dur;
+        if (edge === 'L') i.c.start = i.o.start + i.o.duration - dur;
+        const k = i.o.duration / dur;
+        i.c.kf = {};
+        for (const [p, list] of Object.entries(i.o.kf || {})) i.c.kf[p] = list.map((kk) => ({ t: +(kk.t / k).toFixed(4), v: kk.v }));
+      }
       render();
       FL.emit('inspector-refresh');
       FL.requestDraw();
@@ -591,24 +631,29 @@
     startDrag(onMove, () => { if (moved) FL.changed(); }, 'trimming');
   }
 
-  // slip: change the source in-point without moving the clip
-  function slipDrag(e, clip) {
+  // slip: change which part of the source shows, without moving the clip
+  function slipDrag(e, clip, solo) {
     if (clip.type !== 'video' && clip.type !== 'audio') return moveDrag(e, clip, false);
-    const m = FL.media(clip.mediaId);
-    if (!m) return;
+    const info = linkedGroup(clip, solo).filter((c) => (c.type === 'video' || c.type === 'audio') && FL.media(c.mediaId)).map((c) => {
+      const m = FL.media(c.mediaId);
+      const speed = c.speed || 1;
+      return { c, o: clone(c), speed, maxIn: Math.max(0, m.duration - c.duration * speed) };
+    });
+    if (!info.length) return;
+    let lo = -Infinity; let hi = Infinity; // allowed shift in timeline seconds
+    for (const i of info) { lo = Math.max(lo, ((i.o.in || 0) - i.maxIn) / i.speed); hi = Math.min(hi, (i.o.in || 0) / i.speed); }
     const x0 = e.clientX;
-    const orig = clone(clip);
-    const speed = clip.speed || 1;
-    const maxIn = Math.max(0, m.duration - clip.duration * speed);
     let moved = false;
     const onMove = (ev) => {
       const dx = ev.clientX - x0;
       if (!moved && Math.abs(dx) < 2) return;
       if (!moved) { FL.pushUndo(); moved = true; }
-      clip.in = FL.clamp((orig.in || 0) - xToTime(dx) * speed, 0, maxIn);
+      const d = FL.clamp(xToTime(dx), lo, hi);
+      for (const i of info) i.c.in = (i.o.in || 0) - d * i.speed;
       render();
       FL.requestDraw();
-      FL.toast(`In ${FL.timecode(clip.in)}  ·  Out ${FL.timecode(clip.in + clip.duration * speed)}`, 900);
+      const p = info[0];
+      FL.toast(`In ${FL.timecode(p.c.in)}  ·  Out ${FL.timecode(p.c.in + p.c.duration * p.speed)}`, 900);
     };
     startDrag(onMove, () => { if (moved) FL.changed(); }, 'dragging');
   }
@@ -655,6 +700,16 @@
 
   // track header buttons
   tracksEl.addEventListener('click', (e) => {
+    const pb = e.target.closest('.patch');
+    if (pb) {
+      const tr = FL.track(pb.closest('.track-row').dataset.track);
+      const p = FL.patch();
+      const k = tr.kind === 'video' ? 'v' : 'a';
+      if (p[k] === tr.id) p[k + 'On'] = !p[k + 'On'];
+      else { p[k] = tr.id; p[k + 'On'] = true; }
+      FL.changed({ source: 'patch' });
+      return;
+    }
     const btn = e.target.closest('.hbtn');
     if (!btn) return;
     const tr = FL.track(btn.closest('.track-row').dataset.track);
@@ -707,7 +762,7 @@
         { label: 'Add Edit', key: '⌘K', act: () => FL.cmd('split'), disabled: !inside },
         { label: 'Apply Video Transition', key: '⌘D', act: () => FL.cmd('applyVideoTransition'), disabled: !FL.isVisual(clip) },
         { label: 'Apply Audio Transition', key: '⇧⌘D', act: () => FL.cmd('applyAudioTransition'), disabled: !FL.hasAudio(clip) },
-        { label: clip.type === 'video' && m && m.hasAudio && !clip.muted ? 'Detach Audio' : null, key: '⌘L', act: () => FL.cmd('detachAudio') },
+        { label: FL.selectedClips().some((x) => x.link) ? 'Unlink' : FL.selectedClips().length > 1 ? 'Link' : (FL.hasAudio(clip) && clip.type === 'video' ? 'Unlink Audio' : null), key: '⌘L', act: () => FL.cmd('toggleLink') },
         { label: 'Scale to Frame Size', act: () => FL.cmd('fill'), disabled: !(clip.type === 'video' || clip.type === 'image') },
         { label: (clip.effects || []).some((x) => x.enabled) ? 'Disable Effects' : 'Enable Effects', act: () => FL.cmd('toggleFx'), disabled: !(clip.effects || []).length },
         { label: 'Reveal in Project', act: () => FL.cmd('revealMedia', clip.mediaId), disabled: !m },
@@ -728,118 +783,149 @@
     }
   });
 
-  // ---------------------------------------------------------------- drops: media, files, effects, graphics
-  const ghost = document.createElement('div');
-  ghost.className = 'drop-ghost';
-  ghost.hidden = true;
+  // ---------------------------------------------------------------- dropping onto the timeline
+  const ghosts = [];
   let fxHover = null;
-
-  function dropTarget(e) {
-    const tr = laneAt(e.clientX, e.clientY);
-    if (!tr) return null;
-    let t = Math.max(0, xToTime(laneX(e.clientX)));
-    if (FL.snap) { const a = nearest(t, snapPts(null)); if (a !== null && Math.abs(a - t) < 10 / FL.pxPerSec) t = a; }
-    return { track: tr, time: FL.snapToFrame(t) };
+  const clearGhosts = () => { ghosts.splice(0).forEach((g) => g.remove()); };
+  function addGhost(track, start, dur, cls = '') {
+    const lane = track && tracksEl.querySelector(`.lane[data-track="${track.id}"]`);
+    if (!lane) return;
+    const g = document.createElement('div');
+    g.className = 'drop-ghost ' + cls;
+    g.style.left = timeToX(start) + 'px';
+    g.style.width = Math.max(4, timeToX(dur)) + 'px';
+    lane.appendChild(g);
+    ghosts.push(g);
   }
-  const types = (e) => [...e.dataTransfer.types];
   function setFxHover(el) {
     if (fxHover && fxHover !== el) fxHover.classList.remove('fx-target');
     fxHover = el;
     if (el) el.classList.add('fx-target');
   }
+  function dropTime(clientX) {
+    let t = Math.max(0, xToTime(laneX(clientX)));
+    if (FL.snap) { const a = nearest(t, snapPts(null)); if (a !== null && Math.abs(a - t) < 10 / FL.pxPerSec) t = a; }
+    return FL.snapToFrame(t);
+  }
+  const sides = (m, part) => ({
+    v: m.type !== 'audio' && part !== 'audio',
+    a: m.type !== 'image' && !!m.hasAudio && part !== 'video',
+  });
 
+  FL.dnd.target({
+    match: (el) => !!el.closest('#tracks'),
+    over: (p, e, el) => {
+      clearGhosts();
+      setFxHover(null);
+      const row = el.closest('.track-row');
+      if (!row) return null;
+      const track = FL.track(row.dataset.track);
+      if (p.kind === 'fx') {
+        const clipEl = el.closest('.clip');
+        if (!clipEl) { FL.dnd.hint('Drop on a clip'); return null; }
+        setFxHover(clipEl);
+        const r = clipEl.getBoundingClientRect();
+        const side = e.clientX - r.left < r.width / 2 ? 'in' : 'out';
+        FL.dnd.hint(p.item.kind.endsWith('trans') ? (side === 'in' ? 'Clip start' : 'Clip end') : '');
+        return { clipId: clipEl.dataset.id, side };
+      }
+      if (track.locked) { FL.dnd.hint('Track is locked'); return null; }
+      const t = dropTime(e.clientX);
+      if (p.kind === 'gfx') {
+        if (track.kind !== 'video') { FL.dnd.hint('Drop on a video track'); return null; }
+        addGhost(track, t, D.DEFAULT_GRAPHIC_DURATION);
+        return { track, t };
+      }
+      const m = FL.media(p.mediaId);
+      if (!m) return null;
+      const want = sides(m, p.part || 'both');
+      const dur = p.range && m.type !== 'image' ? p.range.out - p.range.in : m.type === 'image' ? 5 : m.duration;
+      const insert = e.metaKey || e.ctrlKey;
+      const vT = want.v ? (track.kind === 'video' ? track : FL.pairTrack(track, false)) : null;
+      const aT = want.a ? (track.kind === 'audio' ? track : FL.pairTrack(track, false)) : null;
+      addGhost(vT, t, dur, insert ? 'insert' : '');
+      addGhost(aT, t, dur, insert ? 'insert' : '');
+      FL.dnd.hint(`${insert ? 'Insert' : 'Overwrite'} at ${FL.timecode(t)}${insert ? '' : ' · hold ⌘ to insert'}`);
+      return { track, t, insert };
+    },
+    drop: (p, e, st) => {
+      if (p.kind === 'fx') {
+        const clip = FL.clip(st.clipId);
+        if (!clip) return;
+        const targets = FL.sel.has(clip.id) && !p.item.kind.endsWith('trans') ? FL.selectedClips() : [clip];
+        FL.applyFxItem(p.item, targets, st.side);
+        return;
+      }
+      if (p.kind === 'gfx') { FL.insertGraphicItem(p.id, st.track, st.t); return; }
+      FL.placeMedia(FL.media(p.mediaId), { time: st.t, range: p.range, part: p.part, mode: st.insert ? 'insert' : 'overwrite', dropTrack: st.track });
+    },
+    leave: () => { clearGhosts(); setFxHover(null); },
+  });
+
+  // files dragged in from Finder
+  const isFiles = (e) => [...e.dataTransfer.types].includes('Files');
   tracksEl.addEventListener('dragover', (e) => {
-    const ty = types(e);
-    if (ty.includes('application/x-fl-fx')) {
-      const clipEl = e.target.closest('.clip');
-      setFxHover(clipEl);
-      if (clipEl) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }
-      return;
-    }
-    const isMedia = ty.includes('application/x-fl-media');
-    const isGfx = ty.includes('application/x-fl-gfx');
-    const isFiles = ty.includes('Files');
-    if (!isMedia && !isFiles && !isGfx) return;
-    const tgt = dropTarget(e);
-    if (!tgt || tgt.track.locked || (isGfx && tgt.track.kind !== 'video')) { ghost.hidden = true; return; }
+    if (!isFiles(e)) return;
+    const row = e.target.closest('.track-row');
+    if (!row) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
-    let dur = 5;
-    const media = FL.dragMedia ? FL.media(FL.dragMedia) : null;
-    if (media) dur = media.type === 'image' ? 5 : (FL.dragRange ? FL.dragRange.out - FL.dragRange.in : media.duration);
-    if (isGfx) dur = D.DEFAULT_GRAPHIC_DURATION;
-    const lane = tracksEl.querySelector(`.lane[data-track="${tgt.track.id}"]`);
-    if (ghost.parentNode !== lane) lane.appendChild(ghost);
-    ghost.hidden = false;
-    ghost.style.left = timeToX(tgt.time) + 'px';
-    ghost.style.width = Math.max(4, timeToX(dur)) + 'px';
+    clearGhosts();
+    addGhost(FL.track(row.dataset.track), dropTime(e.clientX), 5);
   });
-  tracksEl.addEventListener('dragleave', (e) => {
-    if (!tracksEl.contains(e.relatedTarget)) { ghost.hidden = true; setFxHover(null); }
-  });
+  tracksEl.addEventListener('dragleave', (e) => { if (!tracksEl.contains(e.relatedTarget)) clearGhosts(); });
   tracksEl.addEventListener('drop', async (e) => {
-    ghost.hidden = true;
-    setFxHover(null);
-    const ty = types(e);
-    if (ty.includes('application/x-fl-fx')) {
-      const clipEl = e.target.closest('.clip');
-      if (!clipEl) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const item = JSON.parse(e.dataTransfer.getData('application/x-fl-fx'));
-      const clip = FL.clip(clipEl.dataset.id);
-      const r = clipEl.getBoundingClientRect();
-      const side = e.clientX - r.left < r.width / 2 ? 'in' : 'out';
-      const targets = FL.sel.has(clip.id) && !item.kind.endsWith('trans') ? FL.selectedClips() : [clip];
-      FL.applyFxItem(item, targets, side);
-      return;
-    }
-    const tgt = dropTarget(e);
-    if (!tgt || tgt.track.locked) return;
+    clearGhosts();
+    if (!isFiles(e) || !e.dataTransfer.files.length) return;
+    const row = e.target.closest('.track-row');
+    if (!row) return;
     e.preventDefault();
     e.stopPropagation();
-    if (ty.includes('application/x-fl-gfx')) {
-      FL.insertGraphicItem(e.dataTransfer.getData('application/x-fl-gfx'), tgt.track, tgt.time);
-      return;
-    }
-    const id = e.dataTransfer.getData('application/x-fl-media');
-    if (id) { FL.insertMedia(FL.media(id), tgt.track, tgt.time, FL.dragRange); return; }
-    if (e.dataTransfer.files.length) {
-      const paths = [...e.dataTransfer.files].map((f) => window.api.pathForFile(f)).filter(Boolean);
-      const items = await FL.importPaths(paths);
-      let t = tgt.time;
-      for (const m of items) { const c = FL.insertMedia(m, tgt.track, t); if (c) t = c.start + c.duration; }
+    const track = FL.track(row.dataset.track);
+    let t = dropTime(e.clientX);
+    const paths = [...e.dataTransfer.files].map((f) => window.api.pathForFile(f)).filter(Boolean);
+    for (const m of await FL.importPaths(paths)) {
+      const clips = FL.placeMedia(m, { time: t, dropTrack: track });
+      if (clips.length) t = clips[0].start + clips[0].duration;
     }
   });
 
-  // Puts media on the timeline (picks a fitting track if the target is the wrong kind).
-  FL.insertMedia = (media, track, time, range, mode = 'overwrite') => {
-    if (!media) return null;
-    let kind = track ? track.kind : (media.type === 'audio' ? 'audio' : 'video');
-    if (media.type === 'audio') kind = 'audio';
-    if (media.type === 'image') kind = 'video';
-    if (kind === 'audio' && !media.hasAudio) kind = 'video';
-    if (!track || track.kind !== kind || track.locked) {
-      const list = FL.seq().tracks.filter((t) => t.kind === kind && !t.locked);
-      track = kind === 'video' ? list[list.length - 1] : list[0];
-      if (!track) track = FL.addTrack(kind);
-    }
+  // Places media on the timeline as Premiere does: picture on a V track, sound on an A track, linked.
+  // o: { time, range, mode: 'overwrite'|'insert', part: 'both'|'video'|'audio', video/audio (patch on/off),
+  //      vTrack/aTrack (explicit targets) or dropTrack (V2 drop → A2), newAudioTrack }
+  FL.placeMedia = (media, o = {}) => {
+    if (!media) return [];
+    let part = o.part || 'both';
+    if (o.video === false && o.audio === false) { FL.toast('Both Video and Audio are turned off in the Source monitor'); return []; }
+    if (o.video === false) part = part === 'video' ? 'none' : 'audio';
+    if (o.audio === false) part = part === 'audio' ? 'none' : 'video';
+    const clips = part === 'none' ? [] : FL.clipsFromMedia(media, part, o.range);
+    if (!clips.length) { FL.toast(`This clip has no ${part === 'audio' ? 'sound' : 'picture'} to place`); return []; }
     FL.pushUndo();
-    const clip = FL.clipFromMedia(media, kind);
-    if (range && media.type !== 'image') { clip.in = range.in; clip.duration = Math.max(FL.MIN_CLIP, range.out - range.in); }
-    const at = time ?? FL.time;
-    if (mode === 'insert') {
-      // split everything at `at` on unlocked tracks, then push later clips right
-      for (const c of FL.seq().clips.slice()) if (!FL.isLocked(c) && at > c.start && at < c.start + c.duration) FL.splitClip(c, at);
-      for (const c of FL.seq().clips) if (!FL.isLocked(c) && c.start >= at - 1e-6) c.start += clip.duration;
+    const resolve = (kind) => {
+      let t = kind === 'video' ? o.vTrack : o.aTrack;
+      if (o.dropTrack) t = o.dropTrack.kind === kind ? o.dropTrack : FL.pairTrack(o.dropTrack, true);
+      if (!t && kind === 'audio' && o.newAudioTrack) t = FL.addTrack('audio');
+      if (!t || t.locked || t.kind !== kind) t = (kind === 'video' ? FL.vTracks() : FL.aTracks()).find((x) => !x.locked) || FL.addTrack(kind);
+      return t;
+    };
+    const at = Math.max(0, FL.snapToFrame(o.time ?? FL.time));
+    const dur = clips[0].duration;
+    if (o.mode === 'insert') {
+      const cut = FL.seq().clips.filter((c) => !FL.isLocked(c) && at > c.start + 1e-6 && at < c.start + c.duration - 1e-6);
+      FL.splitClips(cut, at);
+      for (const c of FL.seq().clips) if (!FL.isLocked(c) && c.start >= at - 1e-6) c.start += dur;
     }
-    FL.placeClip(clip, track.id, at);
-    FL.sel = new Set([clip.id]);
-    FL.selectedId = clip.id;
+    for (const c of clips) FL.placeClip(c, resolve(FL.kindFor(c.type)).id, at);
+    FL.selectMany(clips.map((c) => c.id), true);
     FL.changed();
-    FL.emit('select', clip.id);
-    return clip;
+    return clips;
+  };
+  FL.insertMedia = (media, track, time, range, mode = 'overwrite') => {
+    const p = FL.patch();
+    const clips = FL.placeMedia(media, { time, range, mode, dropTrack: track || null, vTrack: FL.track(p.v), aTrack: FL.track(p.a) });
+    return clips[0] || null;
   };
 
   FL.on('change', render);

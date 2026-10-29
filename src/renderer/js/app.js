@@ -30,7 +30,6 @@
     for (const m of items) {
       const el = document.createElement('div');
       el.className = `media ${m.type}${m.missing ? ' missing' : ''}`;
-      el.draggable = true;
       el.dataset.id = m.id;
       el.title = m.path;
       el.innerHTML = `
@@ -47,17 +46,12 @@
   FL.renderBin = renderBin;
   $('#bin-filter').addEventListener('input', renderBin);
 
-  bin.addEventListener('dragstart', (e) => {
+  bin.addEventListener('pointerdown', (e) => {
     const el = e.target.closest('.media');
     if (!el) return;
-    FL.dragMedia = el.dataset.id;
-    FL.dragRange = null;
-    e.dataTransfer.setData('application/x-fl-media', el.dataset.id);
-    e.dataTransfer.effectAllowed = 'copy';
-    const img = el.querySelector('.media-thumb');
-    if (img) e.dataTransfer.setDragImage(img, 40, 24);
+    const m = FL.media(el.dataset.id);
+    FL.dnd.press(e, () => (m && !m.missing ? { kind: 'media', mediaId: m.id, range: null, part: 'both' } : null), m ? m.name : '');
   });
-  bin.addEventListener('dragend', () => { FL.dragMedia = null; });
   bin.addEventListener('click', (e) => {
     const el = e.target.closest('.media');
     bin.querySelectorAll('.media.sel').forEach((n) => n.classList.remove('sel'));
@@ -370,24 +364,48 @@
       FL.changed();
       FL.emit('select', null);
     },
-    detachAudio: () => {
-      const c = FL.selected();
-      const m = c && FL.media(c.mediaId);
-      if (!c || c.type !== 'video' || !m || !m.hasAudio || c.muted) return FL.toast('Select a video clip that has sound');
-      FL.pushUndo();
-      const end = c.start + c.duration;
-      let track = seq().tracks.find((t) => t.kind === 'audio' && !t.locked && !seq().clips.some((o) => o.trackId === t.id && o.start < end && o.start + o.duration > c.start));
-      if (!track) track = FL.addTrack('audio');
-      const a = FL.makeClip({ type: 'audio', mediaId: c.mediaId, start: c.start, duration: c.duration, in: c.in, speed: c.speed,
-        volume: c.volume, pan: c.pan, fadeIn: c.fadeIn, fadeOut: c.fadeOut, atransIn: c.atransIn, atransOut: c.atransOut,
-        kf: Object.fromEntries(Object.entries(c.kf || {}).filter(([k]) => k === 'volume' || k === 'pan')),
-        effects: (c.effects || []).filter((e) => FL.isAudioEffect(e.type)) });
-      FL.placeClip(a, track.id, c.start);
-      c.muted = true;
-      c.effects = (c.effects || []).filter((e) => !FL.isAudioEffect(e.type));
-      FL.changed();
-      FL.toast(`Audio moved to ${track.name}`);
+    // ⌘L — Premiere's Link / Unlink. Old-style clips that carry their own sound get it split onto an audio track.
+    toggleLink: () => {
+      const list = FL.selectedClips().filter((c) => !FL.isLocked(c));
+      if (!list.length) return FL.toast('Select clips first');
+      if (list.some((c) => c.link)) {
+        FL.pushUndo();
+        list.forEach((c) => { c.link = null; });
+        FL.changed();
+        FL.select(FL.selectedId, { solo: true });
+        FL.toast('Unlinked — video and audio now move separately');
+        return;
+      }
+      const embedded = list.length === 1 && list[0].type === 'video' && FL.hasAudio(list[0]) ? list[0] : null;
+      if (embedded) {
+        const c = embedded;
+        FL.pushUndo();
+        const end = c.start + c.duration;
+        let track = FL.aTracks().find((t) => !t.locked && !seq().clips.some((o) => o.trackId === t.id && o.start < end && o.start + o.duration > c.start));
+        if (!track) track = FL.addTrack('audio');
+        const a = FL.makeClip({ type: 'audio', mediaId: c.mediaId, start: c.start, duration: c.duration, in: c.in, speed: c.speed,
+          volume: c.volume, pan: c.pan, fadeIn: c.fadeIn, fadeOut: c.fadeOut, atransIn: c.atransIn, atransOut: c.atransOut, muted: c.muted,
+          kf: Object.fromEntries(Object.entries(c.kf || {}).filter(([k]) => k === 'volume' || k === 'pan')),
+          effects: (c.effects || []).filter((e) => FL.isAudioEffect(e.type)) });
+        FL.placeClip(a, track.id, c.start);
+        c.noAudio = true;
+        c.muted = false;
+        c.effects = (c.effects || []).filter((e) => !FL.isAudioEffect(e.type));
+        FL.changed();
+        FL.toast(`Audio moved to ${track.name}`);
+        return;
+      }
+      if (list.length > 1 && list.some(FL.isVisual) && list.some((c) => c.type === 'audio')) {
+        FL.pushUndo();
+        const link = FL.uid('lnk');
+        list.forEach((c) => { c.link = link; });
+        FL.changed();
+        FL.toast('Linked');
+        return;
+      }
+      FL.toast('Select a video clip and an audio clip to link them');
     },
+    detachAudio: () => cmds.toggleLink(),
     applyVideoTransition: () => applyDefaultTransition('video'),
     applyAudioTransition: () => applyDefaultTransition('audio'),
     toggleFx: () => {
@@ -422,7 +440,7 @@
       FL.changed();
     },
     revealMedia: (id) => {
-      FL.showTab('left', 'project');
+      FL.dock.show('project');
       const el = bin.querySelector(`.media[data-id="${id}"]`);
       if (el) { bin.querySelectorAll('.media.sel').forEach((n) => n.classList.remove('sel')); el.classList.add('sel'); el.scrollIntoView({ block: 'nearest' }); }
     },
@@ -467,7 +485,7 @@
       FL.pushUndo();
       const end = Math.max(...list.map((c) => c.start + c.duration));
       const start = Math.min(...list.map((c) => c.start));
-      const copies = list.map((c) => Object.assign(JSON.parse(JSON.stringify(c)), { id: FL.uid('clip'), start: c.start - start + end }));
+      const copies = FL.relink(list.map((c) => Object.assign(JSON.parse(JSON.stringify(c)), { id: FL.uid('clip'), start: c.start - start + end })));
       copies.forEach((d) => FL.placeClip(d, d.trackId, d.start));
       FL.selectMany(copies.map((d) => d.id));
       FL.changed();
@@ -491,10 +509,12 @@
         if (!track || track.kind !== kind || track.locked) track = seq().tracks.find((t) => t.kind === kind && !t.locked) || FL.addTrack(kind);
         const d = Object.assign(JSON.parse(JSON.stringify(src)), { id: FL.uid('clip') });
         delete d._off;
-        FL.placeClip(d, track.id, FL.time + src._off);
         made.push(d);
+        d._track = track.id;
       }
-      FL.selectMany(made.map((d) => d.id));
+      FL.relink(made);
+      for (const d of made) { const t = d._track; delete d._track; FL.placeClip(d, t, FL.time + list[made.indexOf(d)]._off); }
+      FL.selectMany(made.map((d) => d.id), true);
       FL.changed();
       FL.seek(Math.max(...made.map((d) => d.start + d.duration)));
     },
@@ -517,14 +537,15 @@
       FL.changed();
       FL.toast('Attributes pasted');
     },
-    'panel:project': () => FL.showTab('left', 'project'),
-    'panel:effects': () => { FL.showTab('left', 'effects'); $('#fx-filter').focus(); },
-    'panel:graphics': () => FL.showTab('left', 'graphics'),
-    'panel:source': () => FL.showTab('monitor', 'source'),
-    'panel:program': () => FL.showTab('monitor', 'program'),
-    'panel:effectcontrols': () => { const el = $('#inspector'); el.scrollTop = 0; },
+    'panel:effects': () => { FL.dock.show('effects'); $('#fx-filter').focus(); },
+    'panel:effectcontrols': () => { FL.dock.show('effectcontrols'); $('#inspector').scrollTop = 0; },
+    maximize: () => FL.dock.toggleMax(),
+    'ws:reset': () => FL.dock.reset(),
+    toggleLinkSel: () => setLinkSel(!FL.linkSel),
   };
   for (const k of Object.keys(D.GRAPHICS)) cmds[`gfx:${k}`] = () => FL.insertGraphicItem(k, null, FL.time);
+  for (const id of ['project', 'graphics', 'markers', 'source', 'program', 'timeline', 'meters']) cmds[`panel:${id}`] = () => FL.dock.show(id);
+  for (const n of ['Editing', 'Effects', 'Assembly', 'Audio', 'Graphics', 'Classic']) cmds[`ws:${n}`] = () => FL.dock.workspace(n);
   FL.cmd = (name, arg) => { if (cmds[name]) cmds[name](arg); };
   api.onMenu((name) => FL.cmd(name));
 
@@ -567,16 +588,20 @@
       }
       return;
     }
-    const src = FL.monitorTab === 'source';
     const step = FL.frame();
     const k = e.key;
     const lower = k.length === 1 ? k.toLowerCase() : k;
-    if (src) {
+    if (k === '`' || e.code === 'Backquote') { e.preventDefault(); return FL.dock.toggleMax(); }
+    // Like Premiere, keys go to the focused panel (blue outline). Source has its own transport.
+    if (FL.focusPanel === 'source') {
       if (k === ' ') { e.preventDefault(); return FL.sourceToggle(); }
-      if (lower === 'i') return FL.sourceMark('in');
-      if (lower === 'o') return FL.sourceMark('out');
+      if (lower === 'i') return e.shiftKey ? FL.sourceGo('in') : FL.sourceMark('in');
+      if (lower === 'o') return e.shiftKey ? FL.sourceGo('out') : FL.sourceMark('out');
+      if ((lower === 'x' && e.altKey) || k === '≈') return FL.sourceClear();
+      if (lower === 'j' || lower === 'k' || lower === 'l') return FL.sourceShuttle(lower);
       if (k === 'ArrowLeft') { e.preventDefault(); return FL.sourceStep(e.shiftKey ? -5 : -1); }
       if (k === 'ArrowRight') { e.preventDefault(); return FL.sourceStep(e.shiftKey ? 5 : 1); }
+      if (k === 'Home') return FL.sourceGo('in');
     }
     switch (lower) {
       case ' ': e.preventDefault(); FL.togglePlay(); break;
@@ -614,12 +639,11 @@
       case '=': case '+': FL.zoomBy(1.5); break;
       case '-': case '_': FL.zoomBy(1 / 1.5); break;
       case '\\': FL.zoomFit(); break;
-      case '1': if (e.shiftKey) FL.cmd('panel:project'); break;
-      case '!': FL.cmd('panel:project'); break;
-      case '@': FL.cmd('panel:source'); break;
-      case '$': FL.cmd('panel:program'); break;
-      case '&': FL.cmd('panel:effects'); break;
-      default:
+      default: {
+        // Shift+1…7 open panels (Premiere's defaults); uses the physical key so any keyboard layout works
+        const map = { Digit1: 'project', Digit2: 'source', Digit3: 'timeline', Digit4: 'program', Digit5: 'effectcontrols', Digit6: 'meters', Digit7: 'effects' };
+        if (e.shiftKey && !e.altKey && map[e.code]) FL.dock.show(map[e.code]);
+      }
     }
   });
 
@@ -632,6 +656,14 @@
     document.body.dataset.tool = t;
   }
   function setSnap(v) { FL.snap = v; $('#snap-toggle').classList.toggle('active', v); }
+  function setLinkSel(v) {
+    FL.linkSel = v;
+    $('#link-toggle').classList.toggle('active', v);
+    try { localStorage.setItem('fl-linksel', v ? '1' : '0'); } catch (_) {}
+    FL.toast(v ? 'Linked Selection on — video and its audio select together' : 'Linked Selection off — click picks one side');
+  }
+  try { if (localStorage.getItem('fl-linksel') === '0') { FL.linkSel = false; $('#link-toggle').classList.remove('active'); } } catch (_) {}
+  $('#link-toggle').onclick = () => setLinkSel(!FL.linkSel);
   setTool('select');
   document.querySelectorAll('.tool[data-tool]').forEach((b) => { b.onclick = () => setTool(b.dataset.tool); });
   $('#snap-toggle').onclick = () => setSnap(!FL.snap);
@@ -663,8 +695,6 @@
   function updateInfo() {
     const s = FL.S();
     const sq = seq();
-    $('#seq-info').textContent = `${s.width}×${s.height} · ${s.fps} fps`;
-    $('#prog-seq-name').textContent = sq.name;
     const inout = sq.inPoint != null || sq.outPoint != null;
     $('#tc-duration').textContent = FL.timecode(inout ? (sq.outPoint ?? FL.duration()) - (sq.inPoint ?? 0) : FL.duration());
     $('#tc-current').textContent = FL.timecode(FL.time);
@@ -702,48 +732,12 @@
     ['Tools', [['V', 'Selection'], ['A', 'Track Select Forward'], ['B', 'Ripple Edit'], ['N', 'Rolling Edit'], ['R', 'Rate Stretch'], ['C', 'Razor'], ['Y', 'Slip'], ['T', 'Type (new title)']]],
     ['Playback', [['Space', 'Play / Stop'], ['K / L', 'Stop / Play'], ['J', 'Back 1 second'], ['← →', 'Step one frame'], ['⇧← ⇧→', 'Step five frames'], ['↑ ↓', 'Previous / next edit'], ['Home / End', 'Start / end of sequence']]],
     ['Editing', [['⌘K', 'Add Edit'], ['⇧⌘K', 'Add Edit to All Tracks'], ['Q / W', 'Ripple trim previous / next edit to playhead'], ['⌫ / ⇧⌫', 'Clear / Ripple Delete'], ['⌘D', 'Apply Cross Dissolve'], ['⇧⌘D', 'Apply Constant Power crossfade'], ['⌥-drag', 'Duplicate clips'], ['⌘-drag edge', 'Ripple trim'], ['⌥⌘V', 'Paste Attributes'], ['⌘L', 'Detach Audio'], ['⇧E', 'Enable / disable effects']]],
-    ['Marking', [['I / O', 'Mark In / Out'], ['⇧I / ⇧O', 'Go to In / Out'], ['⌥X', 'Clear In and Out'], ['; / \'', 'Lift / Extract'], ['M', 'Add Marker'], ['⇧M / ⌥⇧M', 'Next / previous marker'], [', / .', 'Insert / Overwrite from Source']]],
+    ['Marking', [['I / O', 'Mark In / Out'], ['⇧I / ⇧O', 'Go to In / Out'], ['⌥X', 'Clear In and Out'], ['; / \'', 'Lift / Extract'], ['M', 'Add Marker'], ['⇧M / ⌥⇧M', 'Next / previous marker'], [', / .', 'Insert / Overwrite from Source'], ['⌘ while dropping', 'Insert instead of overwrite']]],
+    ['Panels', [['Click a panel', 'Focus it (keys go to the focused panel)'], ['Drag a tab', 'Move the panel anywhere: middle = join, edge = dock beside'], ['⌘-drag a tab', 'Float the panel'], ['`', 'Maximize / restore panel'], ['⌘L', 'Link / Unlink video and audio'], ['⌥-click', 'Select only the video or the audio']]],
     ['Timeline', [['S', 'Snap on/off'], ['= / −', 'Zoom in / out'], ['\\', 'Zoom to sequence'], ['⌥ + scroll', 'Zoom at pointer'], ['Shift while dragging', 'Bypass snapping']]],
     ['Project', [['⌘N', 'New Sequence'], ['⌥⌘N', 'New Project'], ['⌘O / ⌘S', 'Open / Save'], ['⌘I', 'Import'], ['⌘M', 'Export Media'], ['⇧⌘E', 'Export Frame'], ['⌘T', 'New Title'], ['⌘Z / ⇧⌘Z', 'Undo / Redo']]],
   ];
   $('#shortcuts-list').innerHTML = SHORTCUTS.map(([g, list]) => `<div class="sc-group"><h3>${g}</h3>${list.map(([k, d]) => `<div class="sc"><kbd>${k}</kbd><span>${d}</span></div>`).join('')}</div>`).join('');
-
-  // ======================================================================
-  // Splitters
-  // ======================================================================
-  const appEl = $('#app');
-  const sizes = { left: 300, right: 330, timeline: 340 };
-  try { Object.assign(sizes, JSON.parse(localStorage.getItem('fl-layout2') || '{}')); } catch (_) {}
-  function applySizes() {
-    appEl.style.setProperty('--left-w', sizes.left + 'px');
-    appEl.style.setProperty('--right-w', sizes.right + 'px');
-    appEl.style.setProperty('--tl-h', sizes.timeline + 'px');
-  }
-  applySizes();
-  document.querySelectorAll('.splitter').forEach((sp) => {
-    sp.addEventListener('pointerdown', (e) => {
-      sp.setPointerCapture(e.pointerId);
-      sp.classList.add('active');
-      const which = sp.dataset.split;
-      const x0 = e.clientX;
-      const y0 = e.clientY;
-      const start = sizes[which];
-      const move = (ev) => {
-        if (which === 'left') sizes.left = FL.clamp(start + ev.clientX - x0, 200, 560);
-        if (which === 'right') sizes.right = FL.clamp(start - (ev.clientX - x0), 260, 560);
-        if (which === 'timeline') sizes.timeline = FL.clamp(start - (ev.clientY - y0), 180, innerHeight - 300);
-        applySizes();
-      };
-      const up = () => {
-        sp.classList.remove('active');
-        sp.removeEventListener('pointermove', move);
-        sp.removeEventListener('pointerup', up);
-        try { localStorage.setItem('fl-layout2', JSON.stringify(sizes)); } catch (_) {}
-      };
-      sp.addEventListener('pointermove', move);
-      sp.addEventListener('pointerup', up);
-    });
-  });
 
   // ======================================================================
   // Sequence settings
@@ -949,27 +943,25 @@
     const files = ['clipA.mp4', 'vertical.mp4', 'photo.jpg', 'music.mp3', 'portrait_src.mp4'].map((f) => dir + '/' + f);
     const [a, v, p, mu, b] = await FL.importPaths(files);
     await new Promise((r) => setTimeout(r, 1500));
-    const [v3, v2, v1, a1] = FL.seq().tracks;
-    FL.insertMedia(a, v1, 0);
-    FL.insertMedia(b, v1, 8);
-    FL.insertMedia(p, v1, 14);
-    const pip = FL.insertMedia(v, v2, 2);
+    const V = FL.vTracks();
+    const A = FL.aTracks();
+    FL.placeMedia(a, { time: 0, dropTrack: V[0] });
+    FL.placeMedia(b, { time: 8, dropTrack: V[0] });
+    FL.placeMedia(p, { time: 14, dropTrack: V[0] });
+    const pip = FL.placeMedia(v, { time: 2, dropTrack: V[1], part: 'video' })[0];
     Object.assign(pip, { scale: 0.45, x: 560, y: -150 });
     pip.kf = { x: [{ t: 0, v: 760 }, { t: 1.5, v: 560 }] };
-    FL.insertMedia(mu, a1, 1);
+    FL.placeMedia(mu, { time: 1, dropTrack: A[1] });
     const c2 = FL.seq().clips.find((c) => c.mediaId === b.id);
     c2.transIn = { type: 'crossdissolve', duration: 1 };
-    const c1 = FL.seq().clips.find((c) => c.mediaId === a.id);
+    const c1 = FL.seq().clips.find((c) => c.mediaId === a.id && c.type === 'video');
     c1.effects.push(FL.makeEffect('lumetri', D.LOOKS['Cinematic Warm']));
     FL.insertGraphicItem('headline', null, 0.5);
     FL.seq().clips[FL.seq().clips.length - 1].duration = 12;
-    FL.insertGraphicItem('ticker', null, 0.5);
-    FL.seq().clips[FL.seq().clips.length - 1].duration = 12;
     FL.seq().markers.push({ id: 'm1', t: 6, name: 'Interview', color: '#ffd34d' });
-    FL.seq().inPoint = 1; FL.seq().outPoint = 11;
     FL.changed();
     FL.zoomFit();
-    FL.select(pip.id);
+    FL.select(c1.id);
     FL.seek(3.2);
   };
 })();

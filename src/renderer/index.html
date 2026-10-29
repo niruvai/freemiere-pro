@@ -8,129 +8,151 @@
 </head>
 <body>
 <div id="app">
-  <!-- Title bar -->
   <header id="titlebar">
     <div class="brand"><span class="logo"></span>Frameline</div>
+    <nav id="ws-bar" title="Workspaces"></nav>
     <div id="docname">Untitled</div>
     <div class="titlebar-actions">
       <button class="btn" id="btn-import" title="Import media (⌘I)"><i class="ic ic-import"></i>Import</button>
       <button class="btn primary" id="btn-export" title="Export media (⌘M)"><i class="ic ic-export"></i>Export</button>
     </div>
   </header>
+  <main id="dock-wrap">
+    <div id="dock-root"></div>
+    <div id="dock-floats"></div>
+  </main>
+</div>
 
-  <main id="workspace">
-    <!-- Left: Project / Effects / Essential Graphics -->
-    <section class="panel" id="panel-left">
-      <div class="tabs" data-group="left">
-        <button class="tab active" data-tab="project">Project</button>
-        <button class="tab" data-tab="effects">Effects</button>
-        <button class="tab" data-tab="graphics">Essential Graphics</button>
+<!-- Every panel lives here; the dock moves them into groups. -->
+<div id="panel-store">
+
+  <section class="pc" data-panel="project">
+    <div class="bin-search">
+      <input id="bin-filter" type="search" placeholder="Search media">
+      <button class="btn small" id="btn-new-item" title="New item">New Item ▾</button>
+    </div>
+    <div id="bin" class="bin">
+      <div class="bin-empty" id="bin-empty">
+        <div class="bin-empty-icon"></div>
+        <p>Drop video, audio or images here</p>
+        <button class="btn" id="btn-import-2">Import Media…</button>
       </div>
-      <div class="tab-page" data-page="project">
-        <div class="bin-search">
-          <input id="bin-filter" type="search" placeholder="Search media">
-          <button class="btn small" id="btn-new-item" title="New item">New Item ▾</button>
+    </div>
+    <div class="panel-foot"><span id="media-count">0 items</span><span class="spacer"></span><span class="hint">Double-click to open in Source</span></div>
+  </section>
+
+  <section class="pc" data-panel="effects">
+    <div class="bin-search"><input id="fx-filter" type="search" placeholder="Search effects & transitions"></div>
+    <div id="fx-tree" class="fx-tree"></div>
+    <div class="panel-foot hint">Drag onto a clip, or double-click to apply to the selected clips</div>
+  </section>
+
+  <section class="pc" data-panel="graphics">
+    <div id="gfx-list" class="gfx-list"></div>
+    <div class="panel-foot hint">Drag onto the timeline or Program monitor, or double-click</div>
+  </section>
+
+  <section class="pc" data-panel="markers">
+    <div id="markers-list" class="markers-list"></div>
+    <div class="panel-foot hint">M adds a marker at the playhead · click to jump · double-click a name to rename</div>
+  </section>
+
+  <section class="pc" data-panel="effectcontrols">
+    <div id="inspector"></div>
+  </section>
+
+  <section class="pc" data-panel="source">
+    <div id="src-monitor" class="monitor-area" title="Drag the picture to the timeline or Program monitor">
+      <video id="src-video" playsinline></video>
+      <img id="src-wave" alt="" hidden>
+      <div id="src-wave-head" hidden></div>
+      <div class="src-empty" id="src-empty">Double-click a clip in the Project panel, or drag it here, to open it in the Source monitor.</div>
+    </div>
+    <div class="mini-ruler src-ruler" id="src-bar" title="Drag the blue handles to change In/Out">
+      <div class="mr-range" id="src-range"><span class="mr-h l" data-h="in" title="In point"></span><span class="mr-h r" data-h="out" title="Out point"></span></div>
+      <div class="mr-head" id="src-head"></div>
+    </div>
+    <div class="transport">
+      <div class="tc edit" id="src-tc" title="Source position — click to type a time">00:00:00:00</div>
+      <div class="transport-buttons">
+        <button class="tbtn" id="s-in" title="Mark In (I)"><i class="ic ic-mark-in"></i></button>
+        <button class="tbtn" id="s-out" title="Mark Out (O)"><i class="ic ic-mark-out"></i></button>
+        <button class="tbtn" id="s-clear" title="Clear In and Out (⌥X)"><i class="ic ic-clear-io"></i></button>
+        <span class="tsep"></span>
+        <button class="tbtn" id="s-goin" title="Go to In (⇧I)"><i class="ic ic-go-in"></i></button>
+        <button class="tbtn" id="s-back" title="Step Back 1 Frame (←)"><i class="ic ic-frame-back"></i></button>
+        <button class="tbtn play" id="s-play" title="Play / Stop (Space)"><i class="ic ic-play"></i></button>
+        <button class="tbtn" id="s-fwd" title="Step Forward 1 Frame (→)"><i class="ic ic-frame-fwd"></i></button>
+        <button class="tbtn" id="s-goout" title="Go to Out (⇧O)"><i class="ic ic-go-out"></i></button>
+        <span class="tsep"></span>
+        <button class="tbtn" id="s-insert" title="Insert (,)"><i class="ic ic-insert"></i></button>
+        <button class="tbtn" id="s-overwrite" title="Overwrite (.)"><i class="ic ic-overwrite"></i></button>
+      </div>
+      <div class="tc dim" id="src-dur" title="In to Out duration">00:00:00:00</div>
+    </div>
+    <div class="src-options">
+      <div class="src-drag">
+        <div class="drag-handle" id="src-drag-v" title="Drag Video Only — drag this onto a video track"><i class="ic ic-video"></i></div>
+        <div class="drag-handle" id="src-drag-a" title="Drag Audio Only — drag this onto an audio track"><i class="ic ic-wave"></i></div>
+      </div>
+      <label class="chk" title="Take the picture (source patch V)"><input type="checkbox" id="src-use-v" checked><span>Video</span></label>
+      <label class="chk" title="Take the sound (source patch A)"><input type="checkbox" id="src-use-a" checked><span>Audio</span></label>
+      <span class="io">
+        <label>In <input id="src-in-f" class="tcin" spellcheck="false"></label>
+        <label>Out <input id="src-out-f" class="tcin" spellcheck="false"></label>
+        <label>Duration <input id="src-dur-f" class="tcin" spellcheck="false"></label>
+      </span>
+      <span class="spacer"></span>
+      <button class="btn small" id="src-ins-btn" title="Insert at the playhead and push later clips right (,)">Insert</button>
+      <button class="btn small primary" id="src-ow-btn" title="Overwrite at the playhead (.)">Overwrite</button>
+    </div>
+  </section>
+
+  <section class="pc" data-panel="program">
+    <div id="monitor" class="monitor-area">
+      <div id="stage"><canvas id="canvas"></canvas></div>
+      <div id="prog-drop" hidden>
+        <div class="pd-row">
+          <div class="pd-zone" data-zone="insert"><b>Insert</b><span>push later clips right</span></div>
+          <div class="pd-zone main" data-zone="overwrite"><b>Overwrite</b><span>at the playhead</span></div>
+          <div class="pd-zone" data-zone="overlay"><b>Overlay</b><span>on a free track above</span></div>
         </div>
-        <div id="bin" class="bin">
-          <div class="bin-empty" id="bin-empty">
-            <div class="bin-empty-icon"></div>
-            <p>Drop video, audio or images here</p>
-            <button class="btn" id="btn-import-2">Import Media…</button>
-          </div>
-        </div>
-        <div class="panel-foot"><span id="media-count">0 items</span></div>
+        <div class="pd-zone wide" data-zone="append"><b>Append at End</b></div>
       </div>
-      <div class="tab-page" data-page="effects" hidden>
-        <div class="bin-search"><input id="fx-filter" type="search" placeholder="Search effects & transitions"></div>
-        <div id="fx-tree" class="fx-tree"></div>
-        <div class="panel-foot hint">Drag onto a clip, or double-click to apply to the selected clips</div>
+    </div>
+    <div class="mini-ruler" id="prog-bar"><div class="mr-range" id="prog-range"></div><div class="mr-head" id="prog-head"></div></div>
+    <div class="transport">
+      <div class="tc edit" id="tc-current" title="Playhead position — click to type a time">00:00:00:00</div>
+      <div class="transport-buttons">
+        <button class="tbtn" id="t-marker" title="Add Marker (M)"><i class="ic ic-marker"></i></button>
+        <button class="tbtn" id="t-in" title="Mark In (I)"><i class="ic ic-mark-in"></i></button>
+        <button class="tbtn" id="t-out" title="Mark Out (O)"><i class="ic ic-mark-out"></i></button>
+        <span class="tsep"></span>
+        <button class="tbtn" id="t-prev" title="Go to Previous Edit Point (↑)"><i class="ic ic-prev-edit"></i></button>
+        <button class="tbtn" id="t-back" title="Step Back 1 Frame (←)"><i class="ic ic-frame-back"></i></button>
+        <button class="tbtn play" id="t-play" title="Play / Stop (Space)"><i class="ic ic-play"></i></button>
+        <button class="tbtn" id="t-fwd" title="Step Forward 1 Frame (→)"><i class="ic ic-frame-fwd"></i></button>
+        <button class="tbtn" id="t-next" title="Go to Next Edit Point (↓)"><i class="ic ic-next-edit"></i></button>
+        <span class="tsep"></span>
+        <button class="tbtn" id="t-lift" title="Lift (;)"><i class="ic ic-lift"></i></button>
+        <button class="tbtn" id="t-extract" title="Extract (')"><i class="ic ic-extract"></i></button>
+        <button class="tbtn" id="t-frame" title="Export Frame (⇧⌘E)"><i class="ic ic-camera"></i></button>
       </div>
-      <div class="tab-page" data-page="graphics" hidden>
-        <div id="gfx-list" class="gfx-list"></div>
-        <div class="panel-foot hint">Drag onto the timeline or double-click to add at the playhead</div>
-      </div>
-    </section>
-
-    <div class="splitter v" data-split="left"></div>
-
-    <!-- Center: Program / Source -->
-    <section class="panel" id="panel-monitor">
-      <div class="tabs" data-group="monitor">
-        <button class="tab active" data-tab="program">Program: <span id="prog-seq-name">Sequence 01</span></button>
-        <button class="tab" data-tab="source">Source: <span id="src-name">(no clip)</span></button>
-        <span class="spacer"></span>
-        <span class="panel-sub" id="seq-info">1920×1080 · 30 fps</span>
+      <div class="transport-right">
         <select id="preview-quality" class="mini-select" title="Playback resolution">
           <option value="1">Full</option>
           <option value="0.5">1/2</option>
           <option value="0.25">1/4</option>
         </select>
+        <div class="tc dim" id="tc-duration" title="Sequence duration (or In/Out duration)">00:00:00:00</div>
       </div>
-      <div class="tab-page monitor-page" data-page="program">
-        <div id="monitor">
-          <div id="stage"><canvas id="canvas"></canvas></div>
-        </div>
-        <div class="mini-ruler" id="prog-bar"><div class="mr-range" id="prog-range"></div><div class="mr-head" id="prog-head"></div></div>
-        <div class="transport">
-          <div class="tc" id="tc-current" title="Playhead position">00:00:00:00</div>
-          <div class="transport-buttons">
-            <button class="tbtn" id="t-marker" title="Add marker (M)"><i class="ic ic-marker"></i></button>
-            <button class="tbtn" id="t-in" title="Mark in (I)"><i class="ic ic-mark-in"></i></button>
-            <button class="tbtn" id="t-out" title="Mark out (O)"><i class="ic ic-mark-out"></i></button>
-            <span class="tsep"></span>
-            <button class="tbtn" id="t-prev" title="Go to previous edit (↑)"><i class="ic ic-prev-edit"></i></button>
-            <button class="tbtn" id="t-back" title="Step back one frame (←)"><i class="ic ic-frame-back"></i></button>
-            <button class="tbtn play" id="t-play" title="Play / Stop (Space)"><i class="ic ic-play"></i></button>
-            <button class="tbtn" id="t-fwd" title="Step forward one frame (→)"><i class="ic ic-frame-fwd"></i></button>
-            <button class="tbtn" id="t-next" title="Go to next edit (↓)"><i class="ic ic-next-edit"></i></button>
-            <span class="tsep"></span>
-            <button class="tbtn" id="t-lift" title="Lift in/out range (;)"><i class="ic ic-lift"></i></button>
-            <button class="tbtn" id="t-extract" title="Extract in/out range (')"><i class="ic ic-extract"></i></button>
-            <button class="tbtn" id="t-frame" title="Export frame (⇧⌘E)"><i class="ic ic-camera"></i></button>
-          </div>
-          <div class="tc dim" id="tc-duration" title="Sequence duration (or in/out duration)">00:00:00:00</div>
-        </div>
-      </div>
-      <div class="tab-page monitor-page" data-page="source" hidden>
-        <div id="src-monitor">
-          <video id="src-video" playsinline></video>
-          <div class="src-empty" id="src-empty">Double-click a clip in the Project panel to open it here</div>
-        </div>
-        <div class="mini-ruler" id="src-bar"><div class="mr-range" id="src-range"></div><div class="mr-head" id="src-head"></div></div>
-        <div class="transport">
-          <div class="tc" id="src-tc">00:00:00:00</div>
-          <div class="transport-buttons">
-            <button class="tbtn" id="s-in" title="Mark in (I)"><i class="ic ic-mark-in"></i></button>
-            <button class="tbtn" id="s-out" title="Mark out (O)"><i class="ic ic-mark-out"></i></button>
-            <span class="tsep"></span>
-            <button class="tbtn" id="s-back" title="Step back"><i class="ic ic-frame-back"></i></button>
-            <button class="tbtn play" id="s-play" title="Play / Stop (Space)"><i class="ic ic-play"></i></button>
-            <button class="tbtn" id="s-fwd" title="Step forward"><i class="ic ic-frame-fwd"></i></button>
-            <span class="tsep"></span>
-            <button class="tbtn" id="s-insert" title="Insert (,)"><i class="ic ic-insert"></i></button>
-            <button class="tbtn" id="s-overwrite" title="Overwrite (.)"><i class="ic ic-overwrite"></i></button>
-          </div>
-          <div class="tc dim" id="src-dur">00:00:00:00</div>
-        </div>
-      </div>
-    </section>
+    </div>
+  </section>
 
-    <div class="splitter v" data-split="right"></div>
-
-    <!-- Right: Effect Controls -->
-    <section class="panel" id="panel-inspector">
-      <div class="tabs"><button class="tab active" id="inspector-title">Effect Controls</button></div>
-      <div id="inspector"></div>
-    </section>
-  </main>
-
-  <div class="splitter h" data-split="timeline"></div>
-
-  <!-- Timeline -->
-  <section class="panel" id="panel-timeline">
+  <section class="pc" data-panel="timeline">
     <div id="seq-tabs"></div>
     <div id="timeline-toolbar">
-      <div class="tc small" id="tl-tc">00:00:00:00</div>
+      <div class="tc small edit" id="tl-tc" title="Playhead position — click to type a time">00:00:00:00</div>
       <div class="tool-group" id="tools">
         <button class="tool active" data-tool="select" title="Selection Tool (V)"><i class="ic ic-arrow"></i></button>
         <button class="tool" data-tool="trackfwd" title="Track Select Forward Tool (A)"><i class="ic ic-trackfwd"></i></button>
@@ -142,6 +164,7 @@
       </div>
       <div class="tool-group">
         <button class="tool toggle active" id="snap-toggle" title="Snap in Timeline (S)"><i class="ic ic-magnet"></i></button>
+        <button class="tool toggle active" id="link-toggle" title="Linked Selection — clicking picks video and its audio together (Option-click picks one)"><i class="ic ic-link"></i></button>
         <button class="tool" id="tl-marker" title="Add Marker (M)"><i class="ic ic-marker"></i></button>
       </div>
       <div class="tool-group">
@@ -156,21 +179,23 @@
         <button class="btn small" id="zoom-fit" title="Zoom to sequence (\)">Fit</button>
       </div>
     </div>
-    <div id="timeline-body">
-      <div id="timeline-scroll">
-        <div id="timeline">
-          <div id="ruler-row">
-            <div class="corner"></div>
-            <canvas id="ruler"></canvas>
-          </div>
-          <div id="tracks"></div>
-          <div id="playhead"><div class="ph-head"></div></div>
-          <div id="snap-line"></div>
-          <div id="marquee" hidden></div>
+    <div id="timeline-scroll">
+      <div id="timeline">
+        <div id="ruler-row">
+          <div class="corner"><span title="Source patching: the blue V1/A1 labels show which tracks Insert/Overwrite use. Click a slot to move them; click a lit one to turn it off.">Source</span></div>
+          <canvas id="ruler"></canvas>
         </div>
+        <div id="tracks"></div>
+        <div id="playhead"><div class="ph-head"></div></div>
+        <div id="snap-line"></div>
+        <div id="marquee" hidden></div>
       </div>
-      <div id="meter-col" title="Audio meters"><canvas id="meter"></canvas><div class="meter-label">L R</div></div>
     </div>
+  </section>
+
+  <section class="pc" data-panel="meters">
+    <canvas id="meter"></canvas>
+    <div class="meter-label">L R</div>
   </section>
 </div>
 
@@ -214,7 +239,6 @@
   </div>
 </div>
 
-<!-- Sequence settings -->
 <div class="modal-backdrop" id="seq-modal" hidden>
   <div class="modal">
     <div class="modal-head"><h2>Sequence Settings</h2><button class="x" data-close>×</button></div>
@@ -223,7 +247,6 @@
   </div>
 </div>
 
-<!-- Shortcuts dialog -->
 <div class="modal-backdrop" id="shortcuts-modal" hidden>
   <div class="modal wide">
     <div class="modal-head"><h2>Keyboard Shortcuts</h2><button class="x" data-close>×</button></div>
@@ -240,9 +263,11 @@
 <script src="js/render.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/preview.js"></script>
+<script src="js/dnd.js"></script>
 <script src="js/timeline.js"></script>
 <script src="js/inspector.js"></script>
 <script src="js/panels.js"></script>
+<script src="js/dock.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
