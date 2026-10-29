@@ -1,4 +1,4 @@
-/* Frameline — timeline: sequence tabs, ruler (markers, in/out), tracks,
+/* Freemiere Pro — timeline: sequence tabs, ruler (markers, in/out), tracks,
    clips, transitions, keyframe ticks, playhead and every editing tool
    (selection, track-select-forward, ripple, rolling, rate stretch, razor, slip). */
 'use strict';

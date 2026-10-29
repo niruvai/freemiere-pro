@@ -1,4 +1,4 @@
-/* Frameline — Effect Controls: Motion, Opacity, Time, Volume/Pan (all
+/* Freemiere Pro — Effect Controls: Motion, Opacity, Time, Volume/Pan (all
    keyframeable), the clip's effect stack with masks, titles, graphics
    templates and transitions. */
 'use strict';

@@ -1,4 +1,4 @@
-/* Frameline — picture rendering shared by the Program monitor and the
+/* Freemiere Pro — picture rendering shared by the Program monitor and the
    exporter: titles, graphics templates, video effects (with masks),
    motion/opacity and transitions. Everything the exporter needs as an image
    (titles, graphics, masks, vignettes) is drawn here so preview == export. */

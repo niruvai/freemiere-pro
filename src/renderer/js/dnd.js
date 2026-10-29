@@ -1,4 +1,4 @@
-/* Frameline — in-app drag and drop (media, effects, graphics, source clips).
+/* Freemiere Pro — in-app drag and drop (media, effects, graphics, source clips).
    Pointer-based rather than HTML5 drag, so it behaves the same on every Mac and
    targets can show live previews (clip ghosts, drop zones). Panels register
    drop targets with FL.dnd.target({ match, over, drop, leave }). */

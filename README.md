@@ -1,4 +1,4 @@
-# Frameline — ম্যাকের জন্য ভিডিও এডিটর
+# Freemiere Pro — ম্যাকের জন্য ভিডিও এডিটর
 
 Premiere Pro-এর মতো কাজের ধারায় বানানো ভিডিও এডিটর। বাঁয়ে Project / Effects / Essential Graphics, মাঝে Program আর Source মনিটর, ডানে Effect Controls, নিচে একাধিক সিকোয়েন্সের মাল্টি-ট্র্যাক টাইমলাইন আর অডিও মিটার। Electron আর FFmpeg দিয়ে তৈরি, এক্সপোর্ট হয় H.264 MP4।
 
@@ -21,7 +21,7 @@ npm start
 npm run dist
 ```
 
-`dist/` ফোল্ডারে DMG তৈরি হবে। অ্যাপটা Apple-এ সাইন করা নয়, তাই প্রথমবার Applications-এ Frameline-এ রাইট-ক্লিক করে **Open** চাপুন। (না খুললে `xattr -cr /Applications/Frameline.app`।)
+`dist/` ফোল্ডারে DMG তৈরি হবে। অ্যাপটা Apple-এ সাইন করা নয়, তাই প্রথমবার Applications-এ Freemiere Pro-এ রাইট-ক্লিক করে **Open** চাপুন। (না খুললে `xattr -cr "/Applications/Freemiere Pro.app"`।)
 
 ## Premiere-এর যে সুবিধাগুলো আছে
 

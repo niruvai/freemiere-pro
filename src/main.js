@@ -1,4 +1,4 @@
-// Frameline — main process
+// Freemiere Pro — main process
 // Window, native menus, file dialogs, and every FFmpeg job (probe, thumbnails,
 // waveforms, preview proxies, final export) live here.
 
@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { buildExportArgs } = require('./export');
 
+app.setName('Freemiere Pro');
 nativeTheme.themeSource = 'dark';
 
 // ---------- flmedia:// — serves imported media to the editor with byte ranges and CORS,
@@ -197,7 +198,7 @@ function createWindow() {
     backgroundColor: '#141416',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 14, y: 14 },
-    title: 'Frameline',
+    title: 'Freemiere Pro',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -436,8 +437,8 @@ ipcMain.handle('project:save', async (_e, data, filePath) => {
   if (!target) {
     const res = await dialog.showSaveDialog(win, {
       title: 'Save Project',
-      defaultPath: 'Untitled.flproj',
-      filters: [{ name: 'Frameline Project', extensions: ['flproj'] }],
+      defaultPath: 'Untitled.fpproj',
+      filters: [{ name: 'Freemiere Pro Project', extensions: ['fpproj'] }],
     });
     if (res.canceled) return null;
     target = res.filePath;
@@ -450,7 +451,7 @@ ipcMain.handle('project:open', async () => {
   const res = await dialog.showOpenDialog(win, {
     title: 'Open Project',
     properties: ['openFile'],
-    filters: [{ name: 'Frameline Project', extensions: ['flproj'] }],
+    filters: [{ name: 'Freemiere Pro Project', extensions: ['fpproj', 'flproj'] }],
   });
   if (res.canceled || !res.filePaths[0]) return null;
   const file = res.filePaths[0];
@@ -489,7 +490,7 @@ ipcMain.handle('export:pick', async (_e, defaultName) => {
 let exportChild = null;
 let exportCancelled = false;
 ipcMain.handle('export:start', async (_e, job) => {
-  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'frameline-export-'));
+  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'freemiere-export-'));
   const images = {};
   let n = 0;
   for (const [key, dataUrl] of Object.entries(job.images || {})) {

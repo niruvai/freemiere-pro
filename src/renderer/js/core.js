@@ -1,4 +1,4 @@
-/* Frameline — core model: project & sequences, selection, undo/redo,
+/* Freemiere Pro — core model: project & sequences, selection, undo/redo,
    keyframes and the edit operations every panel uses. */
 'use strict';
 
@@ -58,7 +58,7 @@ FL.newProject = () => {
 FL.seq = () => FL.project.sequences.find((s) => s.id === FL.project.activeSeq) || FL.project.sequences[0];
 FL.S = () => FL.seq().settings;
 
-// Brings projects saved by Frameline 1.x up to the current format.
+// Brings projects saved by Freemiere Pro 1.x up to the current format.
 FL.migrate = (data) => {
   const p = JSON.parse(JSON.stringify(data));
   if (!p.sequences) {
@@ -273,10 +273,10 @@ FL.changed = (opts = {}) => {
 FL.setDirty = (d) => {
   FL.dirty = d;
   const name = FL.projectName();
-  window.api.setDirty(d, `${name}${d ? ' — Edited' : ''} — Frameline`);
+  window.api.setDirty(d, `${name}${d ? ' — Edited' : ''} — Freemiere Pro`);
   FL.emit('title', name, d);
 };
-FL.projectName = () => (FL.filePath ? FL.filePath.split(/[\\/]/).pop().replace(/\.flproj$/, '') : 'Untitled');
+FL.projectName = () => (FL.filePath ? FL.filePath.split(/[\\/]/).pop().replace(/\.(fpproj|flproj)$/, '') : 'Untitled');
 
 // ---------------------------------------------------------------- factories
 FL.makeClip = (props) => Object.assign({

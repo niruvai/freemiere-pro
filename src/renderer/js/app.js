@@ -1,4 +1,4 @@
-/* Frameline — app shell: Project panel, importing, commands, Premiere-style
+/* Freemiere Pro — app shell: Project panel, importing, commands, Premiere-style
    keyboard shortcuts, menus, splitters, save/open and Export. */
 'use strict';
 

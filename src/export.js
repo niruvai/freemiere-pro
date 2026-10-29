@@ -1,4 +1,4 @@
-// Frameline — turns a sequence into one FFmpeg command.
+// Freemiere Pro — turns a sequence into one FFmpeg command.
 //
 // Picture: every video track is composited bottom-up over the background.
 //   • A clip without transitions is scaled, run through its effects, faded,

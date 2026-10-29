@@ -1,4 +1,4 @@
-/* Frameline — audio engine: every playing clip is routed through Web Audio
+/* Freemiere Pro — audio engine: every playing clip is routed through Web Audio
    (clip effects → volume → pan → track bus → master) so preview matches the
    export, volume can go above 100 % and the master meters are real. */
 'use strict';

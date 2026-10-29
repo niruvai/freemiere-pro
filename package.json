@@ -1,8 +1,8 @@
 {
-  "name": "frameline",
-  "productName": "Frameline",
-  "version": "2.1.0",
-  "description": "A Premiere-style video editor for macOS, built on Electron and FFmpeg",
+  "name": "freemiere-pro",
+  "productName": "Freemiere Pro",
+  "version": "2.2.0",
+  "description": "Freemiere Pro \u2014 a Premiere-style video editor for macOS, built on Electron and FFmpeg",
   "main": "src/main.js",
   "author": "Nurunnabi Islam",
   "license": "MIT",
@@ -22,8 +22,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.frameline.editor",
-    "productName": "Frameline",
+    "appId": "com.freemierepro.editor",
+    "productName": "Freemiere Pro",
     "mac": {
       "category": "public.app-category.video",
       "target": [
@@ -41,8 +41,13 @@
     ],
     "fileAssociations": [
       {
+        "ext": "fpproj",
+        "name": "Freemiere Pro Project",
+        "role": "Editor"
+      },
+      {
         "ext": "flproj",
-        "name": "Frameline Project",
+        "name": "Freemiere Pro Project (old)",
         "role": "Editor"
       }
     ]

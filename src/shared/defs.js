@@ -1,4 +1,4 @@
-/* Frameline — definitions shared by the editor (preview) and the exporter:
+/* Freemiere Pro — definitions shared by the editor (preview) and the exporter:
    effects, transitions, looks, graphics templates and keyframe maths.
    Loaded as a <script> in the renderer (window.FLDefs) and via require() in Node. */
 (function (root, factory) {

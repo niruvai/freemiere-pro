@@ -1,4 +1,4 @@
-/* Frameline — dockable panels, like Premiere Pro.
+/* Freemiere Pro — dockable panels, like Premiere Pro.
    The layout is a tree of rows/columns whose leaves are panel groups (tab
    stacks). Drag any panel tab:
      • onto the middle of a group (or its tab bar)  → joins that group as a tab

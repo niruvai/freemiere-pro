@@ -68,7 +68,7 @@ async function ensureElectron() {
   const mirror = (process.env.ELECTRON_MIRROR || 'https://github.com/electron/electron/releases/download/').replace(/\/?$/, '/');
   const url = `${mirror}v${version}/${name}`;
   log(`Electron ${version} is missing its app bundle — fetching ${name}`);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'frameline-electron-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'freemiere-electron-'));
   const zip = path.join(tmp, name);
   try {
     await download(url, zip);
@@ -89,7 +89,7 @@ function ensureFfmpeg() {
   log('Fetching FFmpeg…');
   const script = path.join(root, 'node_modules', 'ffmpeg-static', 'install.js');
   const r = spawnSync(process.execPath, [script], { cwd: path.dirname(script), stdio: quiet ? 'ignore' : 'inherit' });
-  if (r.status !== 0) log('FFmpeg download failed; Frameline will fall back to a system ffmpeg (e.g. Homebrew).');
+  if (r.status !== 0) log('FFmpeg download failed; Freemiere Pro will fall back to a system ffmpeg (e.g. Homebrew).');
 }
 
 function ensureFfprobe() {

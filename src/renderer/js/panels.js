@@ -1,4 +1,4 @@
-/* Frameline — Effects browser, Essential Graphics, Markers, the Source monitor
+/* Freemiere Pro — Effects browser, Essential Graphics, Markers, the Source monitor
    (In/Out, video/audio choice, drag video only / audio only, Insert/Overwrite)
    and the Program monitor's drop zones. */
 'use strict';

@@ -1,4 +1,4 @@
-/* Frameline — Program monitor: playback clock, media element sync (picture
+/* Freemiere Pro — Program monitor: playback clock, media element sync (picture
    and sound, including transition handles) and the compositor. */
 'use strict';
 
