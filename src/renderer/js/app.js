@@ -880,16 +880,33 @@
   $('#ex-seq').addEventListener('change', fillExportOptions);
   async function browse() {
     const name = $('#ex-path').value || $('#ex-path').placeholder;
-    const p = await api.pickExportPath(basename(name));
+    let p = null;
+    try { p = await api.pickExportPath(basename(name)); } catch (err) {
+      showExportError('Could not open the save dialog', err);
+      return null;
+    }
     if (p) { exportPath = p; $('#ex-path').value = p; }
     return p;
+  }
+  function showExportError(title, err) {
+    const msg = String((err && err.message) || err || '').replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    $('#export-form').hidden = true;
+    $('#export-progress').hidden = false;
+    $('#ex-bar').classList.add('fail');
+    $('#ex-pct').textContent = title;
+    $('#ex-eta').textContent = '';
+    $('#ex-result').innerHTML = `<pre class="err">${FL.esc(msg)}</pre>`;
+    $('#ex-start').hidden = true;
+    $('#ex-cancel').textContent = 'Close';
+    exporting = false;
   }
   $('#ex-browse').onclick = browse;
   $('#ex-path').onclick = browse;
   function closeExport() { if (exporting) { api.cancelExport(); return; } exModal.hidden = true; }
   $('#ex-cancel').onclick = closeExport;
 
-  $('#ex-start').onclick = async () => {
+  $('#ex-start').onclick = () => startExport().catch((err) => { console.error(err); showExportError('Export failed', err); });
+  async function startExport() {
     if ($('#ex-start').dataset.mode === 'reveal') { api.reveal(exportPath); return; }
     if (!exportPath && !(await browse())) return;
     const sq = exportSeq();

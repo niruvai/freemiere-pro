@@ -2,6 +2,12 @@
 
 All notable changes to Freemiere Pro are listed here. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.3.1] — 2026-10-29
+
+### Fixed
+- **Export Video and Export Frame couldn't open the save dialog** on Macs where the Movies or Pictures folder is missing. The dialog now falls back to Desktop, Downloads or your home folder, and remembers the last folder you used.
+- If an export can't start, the Export window now shows the reason instead of doing nothing.
+
 ## [2.3.0] — 2026-10-29
 
 ### Added

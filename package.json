@@ -1,7 +1,7 @@
 {
   "name": "freemiere-pro",
   "productName": "Freemiere Pro",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Freemiere Pro \u2014 a Premiere-style video editor for macOS, built on Electron and FFmpeg",
   "main": "src/main.js",
   "author": "Nurunnabi Islam",

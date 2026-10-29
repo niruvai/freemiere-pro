@@ -441,13 +441,35 @@ ipcMain.handle('media:thumb', (_e, file, type, duration) => thumbnail(file, type
 ipcMain.handle('media:wave', (_e, file) => waveform(file));
 ipcMain.handle('media:proxy', (_e, file, type) => proxyAllowed(file, type));
 ipcMain.handle('media:allow', (_e, files) => { for (const f of files || []) if (f) allowedMedia.add(f); return true; });
+// A folder to start a save dialog in. app.getPath() throws when a standard folder
+// (e.g. ~/Movies) is missing, so try several and fall back to the home folder.
+const lastDirFile = () => path.join(app.getPath('userData'), 'last-folders.json');
+function lastDir(kind) { try { const d = JSON.parse(fs.readFileSync(lastDirFile(), 'utf8'))[kind]; return d && fs.existsSync(d) ? d : null; } catch (_) { return null; } }
+function rememberDir(kind, file) {
+  try {
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(lastDirFile(), 'utf8')); } catch (_) {}
+    all[kind] = path.dirname(file);
+    fs.writeFileSync(lastDirFile(), JSON.stringify(all));
+  } catch (_) {}
+}
+function startDir(kind, prefer) {
+  const remembered = lastDir(kind);
+  if (remembered) return remembered;
+  for (const name of [prefer, 'desktop', 'downloads', 'documents', 'home']) {
+    try { const d = app.getPath(name); if (d && fs.existsSync(d)) return d; } catch (_) { /* folder missing — try the next */ }
+  }
+  return require('os').homedir();
+}
+
 ipcMain.handle('frame:save', async (_e, dataUrl, name) => {
   const res = await dialog.showSaveDialog(win, {
     title: 'Export Frame',
-    defaultPath: path.join(app.getPath('pictures'), name || 'Frame.png'),
+    defaultPath: path.join(startDir('frame', 'pictures'), name || 'Frame.png'),
     filters: [{ name: 'PNG Image', extensions: ['png'] }],
   });
   if (res.canceled || !res.filePath) return null;
+  rememberDir('frame', res.filePath);
   fs.writeFileSync(res.filePath, Buffer.from(dataUrl.split(',')[1], 'base64'));
   allowedMedia.add(res.filePath);
   return res.filePath;
@@ -503,10 +525,12 @@ ipcMain.handle('shell:reveal', (_e, file) => shell.showItemInFolder(file));
 ipcMain.handle('export:pick', async (_e, defaultName) => {
   const res = await dialog.showSaveDialog(win, {
     title: 'Export Video',
-    defaultPath: path.join(app.getPath('movies'), defaultName || 'Untitled.mp4'),
+    defaultPath: path.join(startDir('export', 'movies'), defaultName || 'Untitled.mp4'),
     filters: [{ name: 'MPEG-4 Video', extensions: ['mp4'] }, { name: 'QuickTime Movie', extensions: ['mov'] }],
   });
-  return res.canceled ? null : res.filePath;
+  if (res.canceled || !res.filePath) return null;
+  rememberDir('export', res.filePath);
+  return res.filePath;
 });
 
 let exportChild = null;
