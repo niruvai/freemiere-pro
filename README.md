@@ -181,14 +181,14 @@ npm run dist       # build dist/Freemiere-Pro-<arch>.dmg and .zip
 Releases are built by [GitHub Actions](.github/workflows/release.yml) on macOS runners, for both Apple silicon and Intel.
 
 1. Bump `version` in `package.json` and add a section for it to [CHANGELOG.md](CHANGELOG.md).
-2. Commit, then tag and push:
+2. Commit and push to `main`:
 
    ```bash
-   git tag v2.3.0
-   git push origin main v2.3.0
+   git commit -am "Release 2.4.0"
+   git push
    ```
 
-3. The workflow builds `Freemiere-Pro-arm64` and `Freemiere-Pro-x64` (DMG + ZIP) and publishes a GitHub Release. The release notes come from the changelog. Installed copies of the app pick the new release up automatically.
+3. If there's no release for that version yet, the workflow builds `Freemiere-Pro-arm64` and `Freemiere-Pro-x64` (DMG + ZIP) and creates tag and release `v<version>`. The release notes come from the changelog. Installed copies of the app pick the new release up automatically. You can also start it by hand from the **Actions** tab (**Release → Run workflow**).
 
 ## Project structure
 
