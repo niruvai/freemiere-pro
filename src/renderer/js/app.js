@@ -251,11 +251,15 @@
   }
 
   const cmds = {
-    new: async () => { if (await api.confirmDiscard()) loadProject(FL.newProject(), null); },
+    new: () => FL.home.newProject(),
+    home: () => FL.home.show(),
+    closeProject: () => FL.home.closeProject(),
+    checkUpdates: () => api.checkUpdates(),
     open: async () => {
       if (!(await api.confirmDiscard())) return;
       const res = await api.openProject();
       if (res) loadProject(res.data, res.path);
+      if (res && FL.home) FL.home.markProject();
     },
     save: () => saveProject(false),
     saveAs: () => saveProject(true),
@@ -272,13 +276,7 @@
     undo: () => (isTyping(document.activeElement) ? document.execCommand('undo') : FL.undo()),
     redo: () => (isTyping(document.activeElement) ? document.execCommand('redo') : FL.redo()),
 
-    newSequence: () => {
-      FL.pushUndo();
-      const s = FL.newSequence(`Sequence ${String(FL.project.sequences.length + 1).padStart(2, '0')}`, seq().settings);
-      FL.project.sequences.push(s);
-      FL.changed();
-      FL.openSequence(s.id);
-    },
+    newSequence: () => FL.home.newSequence(),
     newSequenceFrom: (mediaId) => {
       const m = FL.media(mediaId);
       if (!m) return;
@@ -584,6 +582,7 @@
   // Keyboard (Premiere Pro defaults)
   // ======================================================================
   window.addEventListener('keydown', (e) => {
+    if (FL.home && FL.home.visible()) return;
     if (e.key === 'Escape') {
       if (!$('#context-menu').hidden) return FL.hideMenu();
       const open = document.querySelector('.modal-backdrop:not([hidden])');
@@ -820,6 +819,7 @@
     FL.setDirty(false);
     FL.project.media.forEach((m) => ensureAssets(m));
     setTimeout(() => FL.zoomFit(), 60);
+    if (FL.home && FL.home.visible()) FL.home.hide();
   }
   FL.loadProject = loadProject;
   api.onProjectLoaded(async ({ path, data }) => { if (await api.confirmDiscard()) loadProject(data, path); });

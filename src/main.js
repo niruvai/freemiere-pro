@@ -189,6 +189,47 @@ async function proxyAllowed(file, type) {
 let win = null;
 let dirty = false;
 let pendingOpenFile = null;
+let splash = null;
+
+// ---------- Recent projects (shown on the Home screen) ----------
+const recentFile = () => path.join(app.getPath('userData'), 'recent-projects.json');
+function readRecent() { try { return JSON.parse(fs.readFileSync(recentFile(), 'utf8')).filter((r) => r && r.path); } catch (_) { return []; } }
+function writeRecent(list) { try { fs.writeFileSync(recentFile(), JSON.stringify(list.slice(0, 40), null, 1)); } catch (_) {} }
+function addRecent(file) {
+  if (!file) return;
+  writeRecent([{ path: file, opened: Date.now() }, ...readRecent().filter((r) => r.path !== file)]);
+  app.addRecentDocument(file);
+}
+function userName() {
+  try {
+    if (process.platform === 'darwin') { const n = require('child_process').execFileSync('id', ['-F'], { encoding: 'utf8' }).trim(); if (n) return n; }
+    if (process.platform === 'linux') {
+      const u = require('os').userInfo().username;
+      const line = require('child_process').execFileSync('getent', ['passwd', u], { encoding: 'utf8' }).split(':')[4];
+      const n = (line || '').split(',')[0].trim();
+      if (n) return n;
+    }
+  } catch (_) { /* fall back to the account name */ }
+  try { return require('os').userInfo().username; } catch (_) { return ''; }
+}
+
+// ---------- Splash screen ----------
+const testMode = () => !!(process.env.FRAMELINE_SCREENSHOT || process.env.FREEMIERE_NO_SPLASH);
+function createSplash() {
+  if (testMode()) return;
+  splash = new BrowserWindow({
+    width: 640, height: 400, frame: false, resizable: false, movable: true, show: false,
+    center: true, skipTaskbar: true, alwaysOnTop: false, backgroundColor: '#ffffff', hasShadow: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  splash.loadFile(path.join(__dirname, 'renderer', 'splash.html'), { query: { v: app.getVersion() } });
+  splash.once('ready-to-show', () => splash && splash.show());
+  splash.on('closed', () => { splash = null; });
+  splash.shownAt = Date.now();
+}
+function splashStatus(text) {
+  if (splash && !splash.isDestroyed()) splash.webContents.executeJavaScript(`window.setStatus && window.setStatus(${JSON.stringify(text)})`).catch(() => {});
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -211,7 +252,15 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  splashStatus('Loading editor…');
+  win.webContents.once('dom-ready', () => splashStatus('Restoring workspace…'));
+  win.once('ready-to-show', () => {
+    const wait = splash ? Math.max(0, 1800 - (Date.now() - splash.shownAt)) : 0;
+    setTimeout(() => {
+      win.show();
+      if (splash && !splash.isDestroyed()) splash.close();
+    }, wait);
+  });
   win.webContents.once('did-finish-load', () => {
     if (pendingOpenFile) { openProjectFile(pendingOpenFile); pendingOpenFile = null; }
   });
@@ -257,7 +306,7 @@ async function openProjectFile(file) {
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
     send('project:loaded', { path: file, data });
-    app.addRecentDocument(file);
+    addRecent(file);
   } catch (err) {
     dialog.showErrorBox('Could not open project', String(err.message || err));
   }
@@ -287,11 +336,14 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'New Project', accelerator: 'Alt+CmdOrCtrl+N', click: cmd('new') },
-        { label: 'New Sequence', accelerator: 'CmdOrCtrl+N', click: cmd('newSequence') },
+        { label: 'Home', accelerator: 'Shift+CmdOrCtrl+H', click: cmd('home') },
+        { type: 'separator' },
+        { label: 'New Project…', accelerator: 'Alt+CmdOrCtrl+N', click: cmd('new') },
+        { label: 'New Sequence…', accelerator: 'CmdOrCtrl+N', click: cmd('newSequence') },
         { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: cmd('open') },
         { role: 'recentDocuments', submenu: [{ role: 'clearRecentDocuments' }] },
         { type: 'separator' },
+        { label: 'Close Project', accelerator: 'Shift+CmdOrCtrl+W', click: cmd('closeProject') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: cmd('save') },
         { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: cmd('saveAs') },
         { type: 'separator' },
@@ -488,7 +540,57 @@ ipcMain.handle('project:save', async (_e, data, filePath) => {
     target = res.filePath;
   }
   fs.writeFileSync(target, JSON.stringify(data, null, 2));
-  app.addRecentDocument(target);
+  addRecent(target);
+  return target;
+});
+
+// Home screen
+ipcMain.handle('app:startup', () => ({
+  showHome: !testMode() && !pendingOpenFile,
+  version: app.getVersion(),
+  user: userName(),
+}));
+ipcMain.handle('recent:list', () => readRecent().map((r) => {
+  let st = null;
+  try { st = fs.statSync(r.path); } catch (_) {}
+  let sequences = null;
+  if (st && st.size < 20 * 1024 * 1024) {
+    try { const d = JSON.parse(fs.readFileSync(r.path, 'utf8')); sequences = d.sequences ? d.sequences.length : 1; } catch (_) {}
+  }
+  return { path: r.path, name: path.basename(r.path).replace(/\.(fpproj|flproj)$/i, ''), opened: r.opened, exists: !!st, size: st ? st.size : 0, modified: st ? st.mtimeMs : 0, sequences };
+}));
+ipcMain.handle('recent:remove', (_e, file) => { writeRecent(readRecent().filter((r) => r.path !== file)); return true; });
+ipcMain.handle('update:check', () => updater.check({ interactive: true }));
+ipcMain.handle('recent:clear', () => { writeRecent([]); app.clearRecentDocuments(); return true; });
+ipcMain.handle('project:read', (_e, file) => {
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  addRecent(file);
+  return { path: file, data };
+});
+ipcMain.handle('project:pickFolder', async (_e, current) => {
+  const res = await dialog.showOpenDialog(win, {
+    title: 'Choose where to save the project',
+    defaultPath: current && fs.existsSync(current) ? current : startDir('project', 'documents'),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0];
+});
+ipcMain.handle('project:defaultFolder', () => startDir('project', 'documents'));
+// Creates the project file on disk right away, like Premiere's New Project.
+ipcMain.handle('project:create', async (_e, data, folder, name) => {
+  const safe = String(name || 'Untitled').replace(/[\\/:*?"<>|]/g, '-').trim() || 'Untitled';
+  if (!folder || !fs.existsSync(folder)) throw new Error('That folder does not exist.');
+  const target = path.join(folder, safe + '.fpproj');
+  if (fs.existsSync(target)) {
+    const r = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Replace', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: `“${safe}.fpproj” already exists.`, detail: 'Replacing it will overwrite that project.',
+    });
+    if (r.response !== 0) return null;
+  }
+  fs.writeFileSync(target, JSON.stringify(data, null, 2));
+  rememberDir('project', target);
+  addRecent(target);
   return target;
 });
 ipcMain.handle('project:open', async () => {
@@ -499,7 +601,7 @@ ipcMain.handle('project:open', async () => {
   });
   if (res.canceled || !res.filePaths[0]) return null;
   const file = res.filePaths[0];
-  app.addRecentDocument(file);
+  addRecent(file);
   return { path: file, data: JSON.parse(fs.readFileSync(file, 'utf8')) };
 });
 ipcMain.handle('confirm:discard', async () => {
@@ -609,6 +711,8 @@ app.on('open-file', (e, file) => {
 app.whenReady().then(() => {
   protocol.handle('flmedia', serveMedia);
   buildMenu();
+  createSplash();
+  splashStatus('Checking FFmpeg…');
   createWindow();
   updater.start({ window: () => win, isDirty: () => dirty, clearDirty: () => { dirty = false; } });
   app.on('activate', () => { if (!win) createWindow(); });

@@ -2,6 +2,15 @@
 
 All notable changes to Freemiere Pro are listed here. Versions follow [Semantic Versioning](https://semver.org).
 
+## [2.4.0] — 2026-11-03
+
+### Added
+- **Splash screen** while Freemiere Pro starts, with artwork generated for each release.
+- **Home screen** at launch: New Project, Open Project, a Recent list (sequences, last opened, size, filter, right-click to reveal or remove), a Learn page and Check for Updates. Open it any time with **File → Home** (⇧⌘H).
+- **New Project dialog:** project name, save location and the first sequence's preset, created and saved in one step.
+- **Sequence presets** in New Sequence (⌘N): HD 1080p from 23.976 to 60 fps, 4K UHD, 720p, Vertical 9:16 for Reels/Shorts/TikTok, Square and 4:5 Portrait, or *Automatic*, which matches the first clip you add.
+- **File → Close Project** (⇧⌘W) returns to Home.
+
 ## [2.3.1] — 2026-10-29
 
 ### Fixed

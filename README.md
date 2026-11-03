@@ -40,6 +40,13 @@ keyframes and broadcast graphics, rendered to H.264 with FFmpeg.
 
 ## Features
 
+### Home screen
+- **Splash and Home**, like Premiere: New Project, Open Project and your recent projects (sequences, last opened, size, filter) at launch. **File → Home** (⇧⌘H) brings it back.
+- **New Project** sets the name, the save folder and the first sequence in one dialog.
+- **Sequence presets:** 1080p (23.976–60 fps), 4K UHD, 720p, Vertical 9:16 for Reels/Shorts/TikTok, Square, 4:5 Portrait, or *Automatic* to match your first clip.
+
+<img src="docs/screenshot-home.png" alt="Freemiere Pro Home screen" width="100%">
+
 ### Workspace
 - **Dockable panels.** Project, Source, Program, Effect Controls, Effects, Essential Graphics, Markers, Timeline and Audio Meters can each be dragged anywhere:
   - drop a tab in the middle of another panel to group them;
@@ -125,12 +132,13 @@ Automatic installation needs the app to be in a folder you can write to, such as
 
 ## Getting started
 
-1. **Import** media (⌘I) or drop files onto the window.
-2. Double-click a clip in **Project** to open it in **Source**. Mark In/Out and pick Video and/or Audio.
-3. Press `.` to overwrite at the playhead or `,` to insert, or drag the picture onto a track.
-4. Trim with the tools, add effects from **Effects**, and graphics from **Essential Graphics**.
-5. Select a clip to adjust it in **Effect Controls**, or move, scale and rotate it directly in **Program**.
-6. **Export** (⌘M) and choose the size, frame rate and quality.
+1. On the **Home** screen click **New Project**, name it, choose a folder and a sequence preset, then **Create**. Add more sequences any time with **File → New Sequence** (⌘N).
+2. **Import** media (⌘I) or drop files onto the window.
+3. Double-click a clip in **Project** to open it in **Source**. Mark In/Out and pick Video and/or Audio.
+4. Press `.` to overwrite at the playhead or `,` to insert, or drag the picture onto a track.
+5. Trim with the tools, add effects from **Effects**, and graphics from **Essential Graphics**.
+6. Select a clip to adjust it in **Effect Controls**, or move, scale and rotate it directly in **Program**.
+7. **Export** (⌘M) and choose the size, frame rate and quality.
 
 Projects are saved as `.fpproj` files. Media stays where it is on disk.
 
@@ -234,6 +242,7 @@ Found a bug or have an idea? [Open an issue](https://github.com/niruvai/freemier
 নতুন ভার্সন এলে অ্যাপ নিজেই জানাবে। **Install and Restart** চাপলে নিজে থেকে আপডেট হয়ে আবার খুলবে। হাতে দেখতে চাইলে **Freemiere Pro → Check for Updates…**।
 
 **মূল কাজ**
+- **নতুন প্রজেক্ট:** অ্যাপ খুললে Home স্ক্রিন আসে। **New Project** চাপুন, নাম ও ফোল্ডার দিন, সিকুয়েন্সের মাপ বেছে নিন (1080p, 4K, Reels/Shorts-এর জন্য Vertical 9:16, Square ইত্যাদি), তারপর **Create**। আগের প্রজেক্ট **Recent** তালিকা থেকে খুলুন। নতুন সিকুয়েন্স চাইলে **File → New Sequence** (⌘N)। যেকোনো সময় Home-এ ফিরতে ⇧⌘H।
 - **প্যানেল সাজানো:** ট্যাব টেনে অন্য প্যানেলের মাঝে ছাড়লে একসাথে ট্যাব হয়। কিনারায় ছাড়লে পাশে বসে। ⌘ চেপে টানলে আলাদা ভাসমান উইন্ডো হয়।
 - **Source থেকে কাটা:**
   - Project-এ ডাবল-ক্লিক করুন, তারপর `I` / `O` চেপে বা In/Out ঘরে সময় লিখে অংশ ঠিক করুন।

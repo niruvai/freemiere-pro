@@ -915,6 +915,18 @@
     const clips = part === 'none' ? [] : FL.clipsFromMedia(media, part, o.range);
     if (!clips.length) { FL.toast(`This clip has no ${part === 'audio' ? 'sound' : 'picture'} to place`); return []; }
     FL.pushUndo();
+    // "Match first clip" sequences take their size and frame rate from the first video or photo placed
+    const seq = FL.seq();
+    if (seq.autoMatch && !seq.clips.length && media.width && media.type !== 'audio') {
+      const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+      const rates = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
+      seq.settings.width = even(media.width);
+      seq.settings.height = even(media.height);
+      if (media.fps) seq.settings.fps = rates.reduce((a, b) => (Math.abs(b - media.fps) < Math.abs(a - media.fps) ? b : a));
+      delete seq.autoMatch;
+      setTimeout(() => FL.toast(`Sequence set to ${seq.settings.width}×${seq.settings.height} · ${seq.settings.fps} fps to match ${media.name}`, 3500), 50);
+      FL.emit('seq');
+    }
     const resolve = (kind) => {
       let t = kind === 'video' ? o.vTrack : o.aTrack;
       if (o.dropTrack) t = o.dropTrack.kind === kind ? o.dropTrack : FL.pairTrack(o.dropTrack, true);
