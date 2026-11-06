@@ -77,7 +77,8 @@ keyframes and broadcast graphics, rendered to H.264 with FFmpeg.
 - In the Program monitor:
   - drag inside a clip to move it;
   - drag a **handle to scale**, or **just outside a corner to rotate** (Shift snaps).
-- **Video effects:** Lumetri Color (exposure, contrast, temperature, tint, saturation, faded film) with eight looks, Black & White, Gaussian Blur, Sharpen, Mosaic, Vignette, Crop, Flip and Ultra Key. Most effects accept **ellipse or rectangle masks** for blurring faces and number plates.
+- **Video effects:** Lumetri Color (exposure, contrast, temperature, tint, saturation, faded film) with eight looks, **LUT (.cube)**, Black & White, Gaussian Blur, Sharpen, Mosaic, Vignette, Crop, Flip and Ultra Key. Most effects accept **ellipse or rectangle masks** for blurring faces and number plates, and **mask tracking** makes the mask follow a moving face or plate.
+- **Keyframes on effects:** Lumetri, Black & White, Gaussian Blur and LUT intensity can be animated.
 - **Adjustment layers** and color mattes.
 - **Transitions:** Cross Dissolve, Dip to Black/White, Push, Wipe, Iris, Clock Wipe and Cross Zoom, plus Constant Power, Constant Gain and Exponential audio crossfades. ⌘D applies the default.
 
@@ -91,8 +92,20 @@ keyframes and broadcast graphics, rendered to H.264 with FFmpeg.
 - Every text, color, font and position is editable. Bangla and other complex scripts render correctly.
 - Titles with any font, stroke, shadow and background box.
 
+### Speed, nesting and multi-camera
+- **Speed ramps:** keyframe Speed (10 %–1000 %) for smooth slow-motion ramps, or Clip → Add Speed Ramp.
+- **Nest** (Clip → Nest…) turns clips into one nested sequence; double-click to edit inside.
+- **Multi-camera:** select camera clips in Project → Create Multi-Camera Sequence. Cameras sync by audio; press 1–9 while playing to cut, or open the Multi-Camera View (⇧0).
+- **Remove Silence** cuts the pauses out of talking clips, on all tracks at once so graphics and music stay in sync.
+- **Auto Reframe** turns a 16:9 edit into 9:16 / 1:1 / 4:5 and pans to follow the subject.
+
+### Templates, safety
+- **Graphics templates (.fpgfx):** save any titles, graphics, mattes and logos as a template, reuse them from Essential Graphics → My Templates, and share them as files.
+- **Auto-save** every 90 seconds while there are unsaved changes, with **crash recovery** on the next launch (File → Open Auto-Saved Version…).
+- **Link Media** finds moved or renamed files: locate one, and the rest in that folder are linked too.
+
 ### Export
-- H.264 MP4 or MOV with AAC audio, at any sequence size (1080p, 4K, vertical 9:16, square, 4:5…) and frame rate.
+- **H.264** or **HEVC / H.265** MP4 with AAC audio, using the Mac's hardware encoder (VideoToolbox) for speed or software encoding, and **Apple ProRes 422 / 422 HQ** MOV for further editing — at any sequence size (1080p, 4K, vertical 9:16, square, 4:5…) and frame rate.
 - Export the whole sequence or its In/Out range; **Export Frame** saves a PNG.
 - Preview and export share one rendering model, so titles, graphics, effects, masks and transitions look the same in both.
 
@@ -206,7 +219,9 @@ build/                 App icon and the packaging hook (ad-hoc code signing)
 scripts/setup.js       Makes sure Electron and FFmpeg are installed
 src/main.js            Window, menus, dialogs, media server, FFmpeg jobs
 src/updater.js         Update checks and self-install from GitHub Releases
-src/export.js          Sequence → a single FFmpeg filter graph
+src/export.js          Sequence → a single FFmpeg filter graph; encoder settings
+src/analysis.js        Silence detection, mask tracking, Auto Reframe, multi-camera audio sync
+src/projectfiles.js    Auto-save and recovery, relinking, graphics templates, .cube LUTs
 src/shared/defs.js     Effects, transitions, looks, graphics templates, keyframe maths
 src/renderer/
   index.html           Panels and dialogs
@@ -220,13 +235,18 @@ src/renderer/
   js/dock.js           Panel docking and workspaces
   js/dnd.js            In-app drag and drop
   js/app.js            Commands, shortcuts, import, save/open, export dialog
+  js/features.js       Dialogs, speed ramps, Remove Silence, Nest, Auto Reframe, tracking, auto-save, Link Media
+  js/multicam.js       Multi-camera sequences, angle switching, Multi-Camera View
+  js/templates.js      Graphics templates (.fpgfx)
 ```
 
 ## Known limitations
 
 - The app is not signed with an Apple Developer ID, so macOS asks for confirmation on first launch.
-- Effect parameters such as blur amount can't be keyframed yet. Motion, opacity, volume and pan can.
-- Not yet supported: nested sequences, multicam, LUT files and subtitle (.srt) import.
+- Sharpen, Mosaic, Vignette, Crop and Ultra Key settings can't be keyframed yet; mask size and feather can't either (mask position can, and can be tracked).
+- A speed ramp changes the picture only; the clip's own sound is silent while it is ramped (linked audio plays at normal speed, as in Premiere).
+- Auto Reframe looks for skin tones, detail and movement; it does not recognise faces. Check the result and fine-tune Position keyframes if needed.
+- Not yet supported: subtitle (.srt) import and automatic captions.
 - DeNoise is heard in the exported file, not in live preview.
 - Long sequences with many transitions and effects take longer to export.
 
@@ -256,6 +276,19 @@ Pull requests are welcome. Read the [contributing guide](CONTRIBUTING.md) first:
 - **ফাঁকা জায়গা মোছা:** দুই ক্লিপের মাঝের ফাঁকা জায়গায় ক্লিক করে Delete চাপুন। অডিও সহ পরের ক্লিপগুলো সরে এসে ফাঁক বন্ধ হয়। সব ফাঁক একসাথে মুছতে **Sequence → Close Gaps**।
 - **স্কেল ও ঘোরানো:** Program মনিটরে ক্লিপের কোণার বা পাশের সাদা চৌকো টানলে ছোট-বড় হয়। কোণার একটু বাইরে থেকে টানলে ঘোরে। Shift চেপে রাখলে ধাপে ধাপে মাপ মেলে।
 - **ভিডিও-অডিও জোড়া:** ক্লিক করলে দুটোই সিলেক্ট হয়। ⌥-ক্লিকে শুধু একটা। ⌘L দিয়ে জোড়া খোলা বা লাগানো যায়।
+
+**নতুন টুল (২.৫)**
+- **নীরবতা কাটা:** কথা বলার ক্লিপ সিলেক্ট করে **Clip → Remove Silence…**। চুপ থাকা অংশ কেটে সব ট্র্যাক একসাথে টেনে আনে, তাই গ্রাফিক্স আর মিউজিক সিঙ্কে থাকে।
+- **দ্রুত এক্সপোর্ট:** এক্সপোর্টে **Encoding → Hardware** দিলে ম্যাকের নিজস্ব চিপে কয়েক গুণ দ্রুত হয়। ছোট ফাইলের জন্য **HEVC**, আরো এডিটের জন্য **ProRes**।
+- **স্পিড র‍্যাম্প:** **Clip → Add Speed Ramp**, অথবা Effect Controls-এ Speed-এর পাশের স্টপওয়াচ চেপে কিফ্রেম দিন।
+- **নেস্ট:** কয়েকটা ক্লিপ সিলেক্ট করে **Clip → Nest…**। ডাবল-ক্লিক করলে ভেতরে ঢুকে এডিট করা যায়।
+- **মাল্টিক্যাম:** Project-এ ⌘ চেপে ক্যামেরার ক্লিপগুলো বেছে রাইট-ক্লিক → **Create Multi-Camera Sequence**। শব্দ মিলিয়ে নিজেই সিঙ্ক করে। প্লে করার সময় 1–9 চাপলে সেই ক্যামেরায় কাট হয়। সব ক্যামেরা একসাথে দেখতে ⇧0।
+- **LUT:** Effects থেকে **LUT (Look File)** দিয়ে যেকোনো .cube ফাইল লাগান।
+- **মাস্ক ট্র্যাকিং:** ব্লার বা মোজাইকের মাস্ক মুখের ওপর বসিয়ে **Track ▶** চাপুন, মাস্ক নিজে থেকে মুখের সাথে সরবে।
+- **অটো রিফ্রেম:** **Sequence → Auto Reframe Sequence…** দিয়ে ১৬:৯ ভিডিও থেকে ৯:১৬ রিলস বানান।
+- **অটো-সেভ:** প্রতি ৯০ সেকেন্ডে কপি থাকে। অ্যাপ হঠাৎ বন্ধ হলে পরেরবার খোলার সময় কাজ ফিরিয়ে আনার অপশন আসে।
+- **Link Media:** ফাইল সরে গেলে একটা খুঁজে দিলেই ওই ফোল্ডারের বাকিগুলোও জুড়ে যায়।
+- **টেমপ্লেট:** টাইটেল, নিউজ বার, লোগো সিলেক্ট করে **Graphics → Save Selection as Template**। Essential Graphics-এর **My Templates**-এ পাবেন, .fpgfx ফাইল হিসেবে শেয়ারও করা যায়।
 
 **অবদান রাখুন**
 কোড দিয়ে সাহায্য করতে চাইলে আগে [অবদান নির্দেশিকা](CONTRIBUTING.md#বাংলা) পড়ুন। নিরাপত্তার সমস্যা পাবলিক Issue-তে না লিখে [নিরাপত্তা নীতি](SECURITY.md) অনুসরণ করুন।

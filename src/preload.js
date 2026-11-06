@@ -34,6 +34,37 @@ contextBridge.exposeInMainWorld('api', {
   pickExportPath: (name) => ipcRenderer.invoke('export:pick', name),
   startExport: (job) => ipcRenderer.invoke('export:start', job),
   cancelExport: () => ipcRenderer.invoke('export:cancel'),
+  encoders: () => ipcRenderer.invoke('export:encoders'),
+
+  // analysis (main process)
+  detectSilence: (file, o) => ipcRenderer.invoke('analysis:silence', file, o),
+  trackBox: (file, o) => ipcRenderer.invoke('analysis:track', file, o),
+  findSubject: (file, o) => ipcRenderer.invoke('analysis:subject', file, o),
+  syncByAudio: (list, o) => ipcRenderer.invoke('analysis:sync', list, o),
+  cancelAnalysis: () => ipcRenderer.invoke('analysis:cancel'),
+  onAnalysisProgress: (fn) => ipcRenderer.on('analysis:progress', (_e, p) => fn(p)),
+
+  pickLut: () => ipcRenderer.invoke('lut:pick'),
+  readLut: (p) => ipcRenderer.invoke('lut:read', p),
+
+  autosave: (data, o) => ipcRenderer.invoke('autosave:write', data, o),
+  autosaveClean: () => ipcRenderer.invoke('autosave:clean'),
+  autosavePending: () => ipcRenderer.invoke('autosave:pending'),
+  autosaveList: () => ipcRenderer.invoke('autosave:list'),
+  autosaveRead: (p) => ipcRenderer.invoke('autosave:read', p),
+  autosaveFolder: () => ipcRenderer.invoke('autosave:folder'),
+
+  relinkPick: (name) => ipcRenderer.invoke('relink:pick', name),
+  relinkPickFolder: () => ipcRenderer.invoke('relink:pickFolder'),
+  relinkSearch: (folder, names) => ipcRenderer.invoke('relink:search', folder, names),
+
+  templates: () => ipcRenderer.invoke('tpl:list'),
+  saveTemplate: (t) => ipcRenderer.invoke('tpl:save', t),
+  deleteTemplate: (p) => ipcRenderer.invoke('tpl:delete', p),
+  templateAsset: (dataUrl) => ipcRenderer.invoke('tpl:asset', dataUrl),
+  templatesFolder: () => ipcRenderer.invoke('tpl:folder'),
+  importTemplates: () => ipcRenderer.invoke('tpl:import'),
+  exportTemplate: (t) => ipcRenderer.invoke('tpl:export', t),
 
   onMenu: (fn) => ipcRenderer.on('menu', (_e, name) => fn(name)),
   onExportProgress: (fn) => ipcRenderer.on('export:progress', (_e, p) => fn(p)),

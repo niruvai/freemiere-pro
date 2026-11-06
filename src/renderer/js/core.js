@@ -26,7 +26,7 @@ const FL = (window.FL = {
 });
 
 FL.MIN_CLIP = 1 / 30;
-FL.VISUAL = new Set(['video', 'image', 'text', 'graphic', 'solid', 'adjust']);
+FL.VISUAL = new Set(['video', 'image', 'text', 'graphic', 'solid', 'adjust', 'nest']);
 FL.uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
 
 FL.on = (evt, fn) => { (FL.listeners[evt] = FL.listeners[evt] || []).push(fn); };
@@ -115,6 +115,29 @@ FL.parseTimecode = (str, fps = FL.fps()) => {
   return Math.max(0, h * 3600 + m * 60 + sec + f / fps);
 };
 FL.duration = (seq = FL.seq()) => seq.clips.reduce((e, c) => Math.max(e, c.start + c.duration), 0);
+FL.seqById = (id) => FL.project.sequences.find((s) => s.id === id) || null;
+// Does a sequence produce any sound (directly or through sequences nested in it)?
+FL.seqHasAudio = (id, seen = new Set()) => {
+  const s = FL.seqById(id);
+  if (!s || seen.has(id)) return false;
+  seen.add(id);
+  return s.clips.some((c) => {
+    if (c.muted) return false;
+    if (c.type === 'audio') return true;
+    if (c.type === 'nest') return !c.noAudio && FL.seqHasAudio(c.seqId, seen);
+    if (c.type !== 'video' || c.noAudio) return false;
+    const m = FL.media(c.mediaId);
+    return !!(m && m.hasAudio);
+  });
+};
+// Would putting sequence `childId` inside `parentId` create a loop?
+FL.nestCycle = (parentId, childId, seen = new Set()) => {
+  if (parentId === childId) return true;
+  if (seen.has(childId)) return false;
+  seen.add(childId);
+  const s = FL.seqById(childId);
+  return !!s && s.clips.some((c) => c.type === 'nest' && FL.nestCycle(parentId, c.seqId, seen));
+};
 
 // ---------------------------------------------------------------- lookups
 FL.media = (id) => FL.project.media.find((m) => m.id === id);
@@ -128,11 +151,17 @@ FL.kindFor = (clipType) => (clipType === 'audio' ? 'audio' : 'video');
 FL.isVisual = (c) => FL.VISUAL.has(c.type);
 FL.hasAudio = (c) => {
   if (c.type === 'audio') return true;
+  if (c.type === 'nest') return !c.noAudio && FL.seqHasAudio(c.seqId);
   if (c.type !== 'video' || c.noAudio) return false;
   const m = FL.media(c.mediaId);
   return !!(m && m.hasAudio);
 };
 FL.clipName = (c) => {
+  if (c.type === 'nest') {
+    const s = FL.project.sequences.find((q) => q.id === c.seqId);
+    const name = s ? s.name : 'Missing sequence';
+    return c.multicam ? `${name} · Cam ${(c.angle || 0) + 1}` : name;
+  }
   if (c.type === 'text') return (c.text || 'Title').split('\n')[0] || 'Title';
   if (c.type === 'graphic') return (D.GRAPHICS[c.template] || {}).name || 'Graphic';
   if (c.type === 'adjust') return 'Adjustment Layer';
@@ -141,10 +170,23 @@ FL.clipName = (c) => {
   return m ? m.name : 'Missing media';
 };
 FL.mediaLimit = (c) => {
+  if (c.type === 'nest') {
+    const s = FL.project.sequences.find((q) => q.id === c.seqId);
+    return s ? Math.max(FL.MIN_CLIP, FL.duration(s) - (c.in || 0)) : Infinity;
+  }
   if (c.type !== 'video' && c.type !== 'audio') return Infinity;
   const m = FL.media(c.mediaId);
   if (!m || !m.duration) return Infinity;
-  return (m.duration - (c.in || 0)) / (c.speed || 1);
+  return D.srcInverse(c, m.duration - (c.in || 0));
+};
+// Source seconds played between clip-local time 0 and u (speed ramps included).
+FL.srcOffset = (c, u) => D.srcOffset(c, u);
+FL.isRamped = (c) => D.isRamped(c);
+// Runs fn with another sequence active (for drawing nested sequences and exporting).
+FL.withSeq = (id, fn) => {
+  const prev = FL.project.activeSeq;
+  FL.project.activeSeq = id;
+  try { return fn(); } finally { FL.project.activeSeq = prev; }
 };
 
 // adjacency on the same track (for two-sided transitions)
@@ -353,6 +395,9 @@ FL.makeGraphicClip = (template, props) => FL.makeClip(Object.assign({
   g: JSON.parse(JSON.stringify(D.GRAPHICS[template].fields)),
 }, props));
 
+// A sequence used as a clip (Premiere's nested sequence). `in` is the offset into that sequence.
+// Multi-camera clips show one angle (one video track of the source sequence) at a time.
+FL.makeNestClip = (seq, props) => FL.makeClip(Object.assign({ type: 'nest', seqId: seq.id, duration: Math.max(FL.MIN_CLIP, FL.duration(seq)), in: 0 }, props));
 FL.makeAdjustClip = (props) => FL.makeClip(Object.assign({ type: 'adjust', duration: 5 }, props));
 FL.makeSolidClip = (props) => FL.makeClip(Object.assign({ type: 'solid', duration: 5, color: '#1a3a8f' }, props));
 
@@ -434,8 +479,8 @@ function splitKf(left, right, off) {
     const r = list.filter((k) => k.t > off + 1e-6).map((k) => ({ t: +(k.t - off).toFixed(4), v: k.v }));
     if (l.length) { l.push({ t: off, v: mid }); lk[prop] = l; }
     if (r.length) { r.unshift({ t: 0, v: mid }); rk[prop] = r; }
-    if (!l.length) left[prop] = mid;
-    if (!r.length) right[prop] = mid;
+    if (!l.length) D.setBase(left, prop, mid);
+    if (!r.length) D.setBase(right, prop, mid);
   }
   left.kf = lk;
   right.kf = rk;
@@ -471,10 +516,10 @@ FL.overwrite = (trackId, start, end, exceptIds) => {
       c.transOut = null;
     } else {
       const cut = end - cs;
+      c.in = (c.in || 0) + FL.srcOffset(c, cut);
       shiftKf(c, cut);
       c.start = end;
       c.duration = ce - end;
-      c.in = (c.in || 0) + cut * (c.speed || 1);
       c.transIn = null;
     }
   }
@@ -494,7 +539,7 @@ FL.splitClip = (clip, t) => {
   const offset = t - clip.start;
   right.start = t;
   right.duration = clip.duration - offset;
-  right.in = (clip.in || 0) + offset * (clip.speed || 1);
+  right.in = (clip.in || 0) + FL.srcOffset(clip, offset);
   right.fadeIn = 0;
   right.transIn = null;
   right.atransIn = null;
@@ -504,9 +549,28 @@ FL.splitClip = (clip, t) => {
   clip.atransOut = null;
   splitKf(clip, right, offset);
   // effects get fresh ids so they can be edited independently
-  right.effects = (right.effects || []).map((e) => Object.assign(e, { id: FL.uid('fx') }));
+  FL.refreshEffectIds(right);
   FL.seq().clips.push(right);
   return right;
+};
+// Gives a clip's effects new ids, carrying their keyframes along.
+FL.refreshEffectIds = (c) => {
+  const map = {};
+  c.effects = (c.effects || []).map((e) => { const id = FL.uid('fx'); map[e.id] = id; return Object.assign(e, { id }); });
+  if (c.kf) {
+    for (const key of Object.keys(c.kf)) {
+      const [kind, id, p] = key.split(':');
+      if ((kind === 'fx' || kind === 'mask') && map[id]) { c.kf[`${kind}:${map[id]}:${p}`] = c.kf[key]; delete c.kf[key]; }
+    }
+  }
+  return c;
+};
+// Drops keyframes that belong to an effect that no longer exists.
+FL.pruneKf = (c) => {
+  for (const key of Object.keys(c.kf || {})) {
+    const [kind, id] = key.split(':');
+    if ((kind === 'fx' || kind === 'mask') && !(c.effects || []).some((e) => e.id === id && (kind === 'fx' || e.mask))) delete c.kf[key];
+  }
 };
 
 // Splits several clips at t; the right-hand pieces of a linked pair stay linked to each other.
@@ -520,6 +584,25 @@ FL.splitClips = (list, t) => {
     rights.push(r);
   }
   return rights;
+};
+
+// Removes [a, b) from the given tracks and pulls everything after it left (Premiere's Extract).
+// Linked pairs that are cut stay linked. Markers move too when every track is affected.
+FL.extractRange = (trackIds, a, b) => {
+  const tracks = new Set(trackIds);
+  const seq = FL.seq();
+  const on = () => seq.clips.filter((c) => tracks.has(c.trackId) && !FL.isLocked(c));
+  FL.splitClips(on().filter((c) => a > c.start + 1e-6 && a < c.start + c.duration - 1e-6), a);
+  FL.splitClips(on().filter((c) => b > c.start + 1e-6 && b < c.start + c.duration - 1e-6), b);
+  const gone = new Set(on().filter((c) => c.start >= a - 1e-6 && c.start + c.duration <= b + 1e-6).map((c) => c.id));
+  seq.clips = seq.clips.filter((c) => !gone.has(c.id));
+  for (const id of gone) FL.sel.delete(id);
+  for (const c of on()) if (c.start >= b - 1e-6) c.start = Math.max(0, c.start - (b - a));
+  if (tracks.size >= seq.tracks.length) {
+    seq.markers = seq.markers.filter((m) => m.t < a || m.t >= b);
+    for (const m of seq.markers) if (m.t >= b) m.t -= b - a;
+  }
+  return gone.size;
 };
 
 // ---------------------------------------------------------------- gaps

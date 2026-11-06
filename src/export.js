@@ -50,8 +50,9 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
   const media = Object.fromEntries(project.media.map((m) => [m.id, m]));
   const images = assets.images || {};
   const meta = assets.meta || {};
+  const luts = assets.luts || {};
   const eps = 0.5 / seq.settings.fps;
-  const clips = seq.clips;
+  const clips = seq.clips.filter((c) => c.type !== 'nest');
 
   const inputs = [];
   const filters = [];
@@ -64,26 +65,89 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
   const prevAdj = (c) => clips.find((o) => o.trackId === c.trackId && o.id !== c.id && Math.abs(o.start + o.duration - c.start) < eps) || null;
   const nextAdj = (c) => clips.find((o) => o.trackId === c.trackId && o.id !== c.id && Math.abs(c.start + c.duration - o.start) < eps) || null;
   const isVisual = (c) => ['video', 'image', 'text', 'graphic', 'solid', 'adjust'].includes(c.type);
-  const hasAudio = (c) => c.type === 'audio' || (c.type === 'video' && !c.noAudio && media[c.mediaId] && media[c.mediaId].hasAudio);
+  // a speed-ramped video keeps only its picture (as in Premiere); unlinked/linked audio clips play normally
+  const hasAudio = (c) => c.type === 'audio' || (c.type === 'video' && !c.noAudio && !D.isRamped(c) && media[c.mediaId] && media[c.mediaId].hasAudio);
   const geom = (c) => meta[c.id] || { bw: W, bh: H };
+
+  // ------------------------------------------------------------ animated parameters
+  // Keyframed effect parameters and moving masks are driven by `sendcmd`: one command file
+  // per clip stream lists, frame by frame, every value that changes. `cmd` collects them.
+  let cmd = null;
+  const cmdName = (filter) => `${filter}@k${uid++}`;
+  function track(name, param, valueAt) {
+    if (!cmd) return;
+    cmd.tracks.push({ name, param, valueAt });
+  }
+  function flushCmd(inL) {
+    const c0 = cmd;
+    cmd = null;
+    if (!c0 || !c0.tracks.length) return inL;
+    const lines = [];
+    const frames = Math.ceil(c0.L * F) + 1;
+    const last = c0.tracks.map(() => null);
+    for (let n = 0; n <= frames; n++) {
+      const t = n / F;
+      const u = FLclamp(t - c0.head, 0, c0.c.duration);
+      const parts = [];
+      c0.tracks.forEach((tk, i) => {
+        const v = tk.valueAt(u);
+        if (v !== last[i]) { parts.push(`${tk.name} ${tk.param} ${v}`); last[i] = v; }
+      });
+      if (parts.length) lines.push(`${num(t, 4)} ${parts.join(', ')};`);
+    }
+    const file = path.join(tmpDir, `cmd${uid++}.txt`);
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+    const out = lbl('cm');
+    filters.push(`[${inL}]sendcmd=f='${file.replace(/\\/g, '/').replace(/'/g, "\\'")}'[${out}]`);
+    return out;
+  }
+  const at = (c, e, u) => D.effectAt(c, e, u);
+  const lutExpr = (lin, i) => `val*${num(lin[i][0], 5)}${lin[i][1] >= 0 ? '+' : ''}${num(lin[i][1] * 255, 3)}`;
 
   // ------------------------------------------------------------ video effects
   function effectBody(e, inL, c, bw, bh, L) {
     const p = e.params || {};
     const out = lbl('fx');
     const f = [];
+    const animated = cmd && D.effectAnimated(c, e);
     switch (e.type) {
       case 'lumetri': case 'bw': {
         const { lin, M } = D.colorOps(e);
-        const lut = ['r', 'g', 'b'].map((ch, i) => `${ch}='clip(val*${num(lin[i][0], 5)}+${num(lin[i][1] * 255, 3)},0,255)'`).join(':');
+        // lutrgb clips its results to 0–255 by itself
+        const lut = ['r', 'g', 'b'].map((ch, i) => `${ch}='${lutExpr(lin, i)}'`).join(':');
         const mx = ['r', 'g', 'b'].map((o, r) => ['r', 'g', 'b'].map((i, cc) => `${o}${i}=${num(M[r][cc], 5)}`).join(':')).join(':');
-        filters.push(`[${inL}]lutrgb=${lut},colorchannelmixer=${mx}[${out}]`);
+        if (!animated) { filters.push(`[${inL}]lutrgb=${lut},colorchannelmixer=${mx}[${out}]`); return out; }
+        const ln = cmdName('lutrgb');
+        const mn = cmdName('colorchannelmixer');
+        ['r', 'g', 'b'].forEach((ch, i) => track(ln, ch, (u) => lutExpr(D.colorOps(at(c, e, u)).lin, i)));
+        ['r', 'g', 'b'].forEach((o, r) => ['r', 'g', 'b'].forEach((ii, cc) => track(mn, o + ii, (u) => num(D.colorOps(at(c, e, u)).M[r][cc], 5))));
+        filters.push(`[${inL}]${ln}=${lut},${mn}=${mx}[${out}]`);
         return out;
       }
       case 'blur':
+        if (animated) {
+          const gn = cmdName('gblur');
+          track(gn, 'sigma', (u) => num(Math.max(0, at(c, e, u).params.amount) * 0.5, 3));
+          filters.push(`[${inL}]${gn}=sigma=${num(Math.max(0, p.amount) * 0.5, 3)}[${out}]`);
+          return out;
+        }
         if (!(p.amount > 0)) return inL;
         filters.push(`[${inL}]gblur=sigma=${num(p.amount * 0.5, 3)}[${out}]`);
         return out;
+      case 'lut': {
+        const file = luts[p.file];
+        if (!file) return inL;
+        const k = (p.intensity ?? 100) / 100;
+        const esc = file.replace(/\\/g, '/').replace(/'/g, "\\'");
+        if (!animated && k >= 0.999) { filters.push(`[${inL}]lut3d=file='${esc}':interp=tetrahedral[${out}]`); return out; }
+        const a = lbl('la'); const b = lbl('lb'); const l = lbl('ll');
+        const bn = cmdName('blend');
+        if (animated) track(bn, 'all_opacity', (u) => num(FLclamp((at(c, e, u).params.intensity ?? 100) / 100, 0, 1), 4));
+        filters.push(`[${inL}]split[${a}][${b}]`);
+        filters.push(`[${a}]lut3d=file='${esc}':interp=tetrahedral[${l}]`);
+        filters.push(`[${l}][${b}]${bn}=all_mode=normal:all_opacity=${num(FLclamp(k, 0, 1), 4)}[${out}]`);
+        return out;
+      }
       case 'sharpen': {
         const k = (p.amount / 100) * 1.5;
         const m = `0 ${num(-k)} 0 ${num(-k)} ${num(1 + 4 * k)} ${num(-k)} 0 ${num(-k)} 0`;
@@ -125,23 +189,49 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
     return out;
   }
 
-  function applyEffects(inL, c, bw, bh, L) {
-    let cur = inL;
+  // head: where clip-local time 0 falls in this stream (transition handles come first)
+  function applyEffects(inL, c, bw, bh, L, head = 0) {
+    cmd = { c, L, head, tracks: [] };
+    // the command file is attached at the head of the chain once all effects are known
+    const startL = lbl('cs');
+    let cur = startL;
     for (const e of c.effects || []) {
       if (!e.enabled || !D.VIDEO_EFFECTS[e.type]) continue;
-      const maskFile = e.mask && !D.VIDEO_EFFECTS[e.type].noMask ? images[`mask:${c.id}:${e.id}`] : null;
-      if (maskFile) {
+      const hasMask = e.mask && !D.VIDEO_EFFECTS[e.type].noMask;
+      const maskFile = hasMask ? images[`mask:${c.id}:${e.id}`] : null;
+      const stampFile = hasMask ? images[`mstamp:${c.id}:${e.id}`] : null;
+      if (maskFile || stampFile) {
         const o = lbl('mo'); const e1 = lbl('me');
         filters.push(`[${cur}]split[${o}][${e1}]`);
         const ef = effectBody(e, e1, c, bw, bh, L);
-        const idx = loopImage(maskFile, L);
         const m = lbl('mk'); const em = lbl('em'); const out = lbl('mf');
-        filters.push(`[${idx}:v]format=gray,scale=${bw}:${bh}[${m}]`);
+        if (stampFile) {
+          // moving mask: a black frame with the white shape overlaid at its keyframed position
+          const st = (meta[c.id] || {})[`mstamp:${e.id}`] || { w: bw, h: bh };
+          const idx = loopImage(stampFile, L);
+          const on = cmdName('overlay');
+          const pos = (u, axis) => {
+            const mk = at(c, e, u).mask;
+            return axis === 'x' ? Math.round(mk.cx * bw - st.w / 2) : Math.round(mk.cy * bh - st.h / 2);
+          };
+          track(on, 'x', (u) => pos(u, 'x'));
+          track(on, 'y', (u) => pos(u, 'y'));
+          const bg = lbl('mb'); const sp = lbl('sp');
+          filters.push(`color=c=black:s=${bw}x${bh}:r=${F}:d=${num(L)},format=rgba[${bg}]`);
+          filters.push(`[${idx}:v]format=rgba[${sp}]`);
+          filters.push(`[${bg}][${sp}]${on}=x=${pos(0, 'x')}:y=${pos(0, 'y')}:format=auto:shortest=1,format=gray${e.mask.invert ? ',negate' : ''}[${m}]`);
+        } else {
+          const idx = loopImage(maskFile, L);
+          filters.push(`[${idx}:v]format=gray,scale=${bw}:${bh}[${m}]`);
+        }
         filters.push(`[${ef}][${m}]alphamerge[${em}]`);
         filters.push(`[${o}][${em}]overlay=0:0:format=auto[${out}]`);
         cur = out;
       } else cur = effectBody(e, cur, c, bw, bh, L);
     }
+    if (cur === startL) { cmd = null; return inL; }
+    // splice: [inL] → (sendcmd, if anything is animated) → startL
+    filters.push(`[${flushCmd(inL)}]null[${startL}]`);
     return cur;
   }
 
@@ -206,12 +296,25 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
     let cur = lbl('src');
     if (c.type === 'video') {
       const m = media[c.mediaId];
-      const speed = c.speed || 1;
-      const want = head * speed;
-      const ss = Math.max(0, (c.in || 0) - want);
-      const padHead = (want - ((c.in || 0) - ss)) / speed;
-      const idx = addInput(['-ss', num(ss), '-t', num(L * speed + 0.5), '-i', m.path]);
-      const f = [speed !== 1 ? `setpts=(PTS-STARTPTS)/${num(speed, 5)}` : 'setpts=PTS-STARTPTS', `fps=${F}`, `scale=${bw}:${bh}:flags=bicubic`, 'setsar=1', 'format=rgba'];
+      const inP = c.in || 0;
+      let ss; let padHead; let srcLen; let pts;
+      if (D.isRamped(c)) {
+        // speed ramp: each source frame is placed at the clip time where the ramp reaches it
+        ss = Math.max(0, inP + D.srcOffset(c, -head));
+        padHead = Math.max(0, D.srcInverse(c, ss - inP) + head);
+        srcLen = D.srcOffset(c, c.duration + tail) - (ss - inP) + 0.5;
+        const inv = D.srcInverseExpr(c, `(PTS-STARTPTS)*TB+${num(ss - inP, 5)}`);
+        pts = `setpts='(${inv}+${num(head - padHead, 5)})/TB'`;
+      } else {
+        const speed = c.speed || 1;
+        const want = head * speed;
+        ss = Math.max(0, inP - want);
+        padHead = (want - (inP - ss)) / speed;
+        srcLen = L * speed + 0.5;
+        pts = speed !== 1 ? `setpts=(PTS-STARTPTS)/${num(speed, 5)}` : 'setpts=PTS-STARTPTS';
+      }
+      const idx = addInput(['-ss', num(ss), '-t', num(srcLen), '-i', m.path]);
+      const f = [pts, `fps=${F}`, `scale=${bw}:${bh}:flags=bicubic`, 'setsar=1', 'format=rgba'];
       if (padHead > 0.001) f.push(`tpad=start_duration=${num(padHead)}:start_mode=clone`);
       f.push(`tpad=stop_mode=clone:stop_duration=${num(tail + 1)}`, `trim=duration=${num(L)}`, 'setpts=PTS-STARTPTS');
       filters.push(`[${idx}:v]${f.join(',')}[${cur}]`);
@@ -238,7 +341,7 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
         filters.push(`[${st}][${crl}]overlay=x=${cr.rx}:y=${cr.ry}:format=auto[${cur}]`);
       } else cur = st;
     }
-    cur = applyEffects(cur, c, bw, bh, L);
+    cur = applyEffects(cur, c, bw, bh, L, head);
     cur = applyOpacity(cur, c, head, L);
     cur = applyMotion(cur, c, bw, bh, head);
     return { label: cur, L };
@@ -247,7 +350,8 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
   const posExpr = (c, U, axis) => D.kfExpr(c, axis, U);
 
   // ------------------------------------------------------------ compositing
-  filters.push(`color=c=${hex(bg)}:s=${W}x${H}:r=${F}:d=${num(full)},format=rgba[L0]`);
+  // nested sequences render with a transparent background so lower tracks show through
+  filters.push(`color=c=${options.transparent ? 'black@0' : hex(bg)}:s=${W}x${H}:r=${F}:d=${num(full)},format=rgba[L0]`);
   let cur = 'L0';
 
   function direct(c) {
@@ -317,7 +421,7 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
     const s = c.start; const e = c.start + c.duration;
     filters.push(`[${cur}]split[${a}][${b}]`);
     filters.push(`[${b}]trim=start=${num(s)}:end=${num(e)},setpts=PTS-STARTPTS[${t}]`);
-    let x = applyEffects(t, c, W, H, c.duration);
+    let x = applyEffects(t, c, W, H, c.duration, 0);
     x = applyOpacity(x, c, 0, c.duration);
     const sh = lbl('as'); const next = lbl('L');
     filters.push(`[${x}]format=rgba,setpts=PTS-STARTPTS+${num(s)}/TB[${sh}]`);
@@ -325,9 +429,11 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
     cur = next;
   }
 
-  const videoTracks = seq.tracks.filter((t) => t.kind === 'video').reverse();
+  let videoTracks = seq.tracks.filter((t) => t.kind === 'video').reverse();
+  // a multi-camera angle renders only its own video track
+  if (options.angle != null) videoTracks = videoTracks.filter((t, i) => i === options.angle);
   for (const track of videoTracks) {
-    if (track.hidden) continue;
+    if (track.hidden && options.angle == null) continue;
     const list = clips.filter((c) => c.trackId === track.id && isVisual(c)).sort((a, b) => a.start - b.start);
     const done = new Set();
     for (const c of list) {
@@ -352,10 +458,11 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
       else direct(c);
     }
   }
+  const enc = encoderArgs(options, OW, OH, F);
   const vFinal = [];
   if (range) vFinal.push(`trim=start=${num(range.start)}:end=${num(range.end)}`, 'setpts=PTS-STARTPTS');
   if (OW !== W || OH !== H) vFinal.push(`scale=${OW}:${OH}:flags=lanczos`);
-  vFinal.push('format=yuv420p');
+  vFinal.push(`format=${enc.pixFmt}`);
   filters.push(`[${cur}]${vFinal.join(',')}[vout]`);
 
   // ------------------------------------------------------------ sound
@@ -434,24 +541,56 @@ function buildExportArgs(project, options, assets, outPath, tmpDir) {
   filters.push(`[asil]${mix.join('')}${aFinal.join(',')}[aout]`);
 
   const total = range ? range.end - range.start : full;
-  const q = { high: ['medium', '18'], standard: ['fast', '21'], draft: ['veryfast', '27'] }[options.quality || 'standard'];
   const graph = filters.join(';\n');
-  try { fs.writeFileSync(path.join(tmpDir, 'graph.txt'), graph); } catch (_) { /* debug copy only */ }
+  try { fs.writeFileSync(path.join(tmpDir, `graph${options.angle != null ? '-cam' + options.angle : ''}-${seq.id}.txt`), graph); } catch (_) { /* debug copy only */ }
   const args = [
     '-y', '-hide_banner', '-nostdin',
     ...inputs,
     '-filter_complex', graph,
     '-map', '[vout]', '-map', '[aout]',
-    '-c:v', 'libx264', '-preset', q[0], '-crf', q[1], '-pix_fmt', 'yuv420p', '-r', String(F),
-    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
+    ...enc.video, '-r', String(F),
+    ...enc.audio, '-ar', '48000',
     '-t', num(total),
     '-movflags', '+faststart',
     '-progress', 'pipe:1', '-nostats',
     outPath,
   ];
-  return { args, total };
+  return { args, total, encoder: enc.name };
+}
+
+// Video/audio encoder settings.
+//   options.codec: 'h264' | 'hevc' | 'prores' | 'prores_hq' | 'intermediate' (internal: nested renders)
+//   options.hw:    use Apple VideoToolbox (only when the encoder exists; see main.js)
+//   options.quality: 'high' | 'standard' | 'draft'
+const BITS_PER_PIXEL = { high: 0.12, standard: 0.075, draft: 0.04 };
+function encoderArgs(options, w, h, fps) {
+  const quality = options.quality || 'standard';
+  const codec = options.codec || 'h264';
+  const kbps = (k) => `${Math.max(500, Math.round((BITS_PER_PIXEL[quality] * w * h * fps * k) / 1000))}k`;
+  const aac = ['-c:a', 'aac', '-b:a', '192k'];
+  if (codec === 'intermediate') {
+    // nested sequences: ProRes 4444 keeps the transparency, and is quick to write and read back
+    return { name: 'ProRes 4444 (intermediate)', pixFmt: 'yuva444p10le', video: ['-c:v', 'prores_ks', '-profile:v', '4', '-alpha_bits', '16', '-pix_fmt', 'yuva444p10le', '-vendor', 'apl0'], audio: ['-c:a', 'pcm_s16le'] };
+  }
+  if (codec === 'prores' || codec === 'prores_hq') {
+    return {
+      name: 'ProRes 422' + (codec === 'prores_hq' ? ' HQ' : ''),
+      pixFmt: 'yuv422p10le',
+      video: ['-c:v', 'prores_ks', '-profile:v', codec === 'prores_hq' ? '3' : '2', '-vendor', 'apl0', '-pix_fmt', 'yuv422p10le'],
+      audio: ['-c:a', 'pcm_s16le'],
+    };
+  }
+  if (codec === 'hevc') {
+    if (options.hw) return { name: 'HEVC (VideoToolbox)', pixFmt: 'yuv420p', video: ['-c:v', 'hevc_videotoolbox', '-b:v', kbps(0.7), '-maxrate', kbps(1.1), '-tag:v', 'hvc1', '-allow_sw', '1', '-pix_fmt', 'yuv420p'], audio: aac };
+    const crf = { high: '20', standard: '24', draft: '28' }[quality];
+    const preset = { high: 'medium', standard: 'fast', draft: 'veryfast' }[quality];
+    return { name: 'HEVC (x265)', pixFmt: 'yuv420p', video: ['-c:v', 'libx265', '-preset', preset, '-crf', crf, '-tag:v', 'hvc1', '-x265-params', 'log-level=error', '-pix_fmt', 'yuv420p'], audio: aac };
+  }
+  if (options.hw) return { name: 'H.264 (VideoToolbox)', pixFmt: 'yuv420p', video: ['-c:v', 'h264_videotoolbox', '-b:v', kbps(1), '-maxrate', kbps(1.5), '-profile:v', 'high', '-allow_sw', '1', '-pix_fmt', 'yuv420p'], audio: aac };
+  const q = { high: ['medium', '18'], standard: ['fast', '21'], draft: ['veryfast', '27'] }[quality];
+  return { name: 'H.264 (x264)', pixFmt: 'yuv420p', video: ['-c:v', 'libx264', '-preset', q[0], '-crf', q[1], '-pix_fmt', 'yuv420p'], audio: aac };
 }
 
 function FLclamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
-module.exports = { buildExportArgs, projectDuration, seqDuration };
+module.exports = { buildExportArgs, projectDuration, seqDuration, encoderArgs };

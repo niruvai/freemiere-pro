@@ -57,6 +57,8 @@
     FL.showMenu(e.clientX, e.clientY, [
       { label: 'Open', act: () => FL.openSequence(id) },
       { label: 'Duplicate Sequence', act: () => FL.cmd('duplicateSequence', id) },
+      { label: 'Insert into Active Sequence as Nest', disabled: id === FL.project.activeSeq, act: () => FL.cmd('insertNest', id) },
+      { label: 'Auto Reframe Sequence…', act: () => { FL.openSequence(id); FL.cmd('reframeSeq'); } },
       { label: 'Sequence Settings…', act: () => { FL.openSequence(id); FL.cmd('settings'); } },
       { sep: true },
       { label: 'Delete Sequence', disabled: FL.project.sequences.length < 2, act: () => FL.cmd('deleteSequence', id) },
@@ -176,11 +178,13 @@
     }
     const fxCount = (c.effects || []).filter((e) => e.enabled).length;
     if (fxCount) badges.push('<em class="fx">fx</em>');
-    if ((c.speed || 1) !== 1) badges.push(`<em>${Math.round(c.speed * 100)}%</em>`);
+    if (FL.isRamped(c)) badges.push('<em class="ramp" title="Speed ramp (time remapping)">ramp</em>');
+    else if ((c.speed || 1) !== 1) badges.push(`<em>${Math.round(c.speed * 100)}%</em>`);
+    if (c.type === 'nest' && !FL.seqById(c.seqId)) badges.push('<em>missing</em>');
     if (c.type === 'video' && m && m.hasAudio && c.muted) badges.push('<em>muted</em>');
     if (!m && (c.type === 'video' || c.type === 'image' || c.type === 'audio')) badges.push('<em>offline</em>');
-    const tIcon = { text: 'text', graphic: 'graphics', adjust: 'adjust', solid: 'matte' }[c.type];
-    return `<div class="clip ${c.type} ${FL.sel.has(c.id) ? 'selected' : ''} ${!m && ['video', 'image', 'audio'].includes(c.type) ? 'offline' : ''}" data-id="${c.id}" style="left:${timeToX(c.start)}px;width:${w}px">
+    const tIcon = { text: 'text', graphic: 'graphics', adjust: 'adjust', solid: 'matte', nest: 'nest' }[c.type];
+    return `<div class="clip ${c.type}${c.multicam ? ' multicam' : ''} ${FL.sel.has(c.id) ? 'selected' : ''} ${!m && ['video', 'image', 'audio'].includes(c.type) ? 'offline' : ''}" data-id="${c.id}" style="left:${timeToX(c.start)}px;width:${w}px">
       ${layers.join('')}
       <div class="clip-label">${tIcon ? icon(tIcon) : ''}${badges.filter((b) => b.includes('fx')).join('')}<span class="${partners.length ? 'linked' : ''}">${FL.esc(FL.clipName(c))}${partners.length ? (c.type === 'audio' ? ' [A]' : ' [V]') : ''}</span>${badges.filter((b) => !b.includes('fx')).join('')}</div>
       <div class="trim l"></div><div class="trim r"></div>
@@ -528,12 +532,12 @@
       if (edge === 'L') {
         let s = po.start + dt;
         if (FL.snap && !ev.shiftKey) { const a = nearest(s, pts); if (a !== null && Math.abs(a - s) < th) { s = a; snapAt = a; } }
-        const lo = Math.max(0, ...info.map((i) => Math.max(ripple ? 0 : i.prevEnd, i.media ? i.o.start - (i.o.in || 0) / i.speed : 0)));
+        const lo = Math.max(0, ...info.map((i) => Math.max(ripple ? 0 : i.prevEnd, i.media ? i.o.start + window.FLDefs.srcInverse(i.o, -(i.o.in || 0)) : i.o.type === 'nest' ? i.o.start - (i.o.in || 0) : 0)));
         const hi = Math.min(...info.map((i) => i.o.start + i.o.duration - FL.MIN_CLIP));
         s = FL.clamp(FL.snapToFrame(s), lo, hi);
         const delta = s - po.start;
         for (const i of info) {
-          i.c.in = Math.max(0, (i.o.in || 0) + delta * i.speed);
+          i.c.in = Math.max(0, (i.o.in || 0) + (i.media || i.c.type === 'nest' ? FL.srcOffset(i.o, delta) : delta * i.speed));
           shiftKfFrom(i.c, i.o, delta);
           i.c.duration = i.o.duration - delta;
           if (ripple) { i.c.start = i.o.start; i.later.forEach((l) => { l.c.start = Math.max(0, l.start - delta); }); }
@@ -579,7 +583,8 @@
       let lo = -Infinity; let hi = Infinity;
       for (const { oa, ob } of pairs) {
         lo = Math.max(lo, -(oa.duration - FL.MIN_CLIP));
-        if (ob.type === 'video' || ob.type === 'audio') lo = Math.max(lo, -(ob.in || 0) / (ob.speed || 1));
+        if (ob.type === 'video' || ob.type === 'audio') lo = Math.max(lo, window.FLDefs.srcInverse(ob, -(ob.in || 0)));
+        if (ob.type === 'nest') lo = Math.max(lo, -(ob.in || 0));
         hi = Math.min(hi, FL.mediaLimit(oa) - oa.duration, ob.duration - FL.MIN_CLIP);
       }
       dt = FL.clamp(dt, lo, hi);
@@ -587,7 +592,7 @@
         a.duration = oa.duration + dt;
         b.start = ob.start + dt;
         b.duration = ob.duration - dt;
-        b.in = Math.max(0, (ob.in || 0) + dt * (ob.speed || 1));
+        b.in = Math.max(0, (ob.in || 0) + FL.srcOffset(ob, dt));
         shiftKfFrom(b, ob, dt);
       }
       render();
@@ -600,6 +605,7 @@
   // rate stretch: drag an edge to change speed instead of content
   function rateDrag(e, clip, edge, solo) {
     if (clip.type !== 'video' && clip.type !== 'audio') return trimDrag(e, clip, edge, false, solo);
+    if (FL.isRamped(clip)) { FL.toast('This clip has a speed ramp — edit its speed keyframes in Effect Controls'); return; }
     const group = linkedGroup(clip, solo).filter((c) => (c.type === 'video' || c.type === 'audio') &&
       Math.abs(c.start - clip.start) < EPS() && Math.abs(c.duration - clip.duration) < EPS());
     const info = group.map((c) => Object.assign({ c, o: clone(c), span: c.duration * (c.speed || 1) }, neighbours(c)));
@@ -738,7 +744,12 @@
       return;
     }
     const clipEl = e.target.closest('.clip');
-    if (clipEl) { FL.cmd('panel:effectcontrols'); }
+    if (clipEl) {
+      const c = FL.clip(clipEl.dataset.id);
+      // like Premiere, double-clicking a nested sequence opens it
+      if (c && c.type === 'nest' && FL.seqById(c.seqId)) { FL.openSequence(c.seqId); return; }
+      FL.cmd('panel:effectcontrols');
+    }
   });
 
   // context menus
@@ -772,6 +783,14 @@
         { label: 'Apply Audio Transition', key: '⇧⌘D', act: () => FL.cmd('applyAudioTransition'), disabled: !FL.hasAudio(clip) },
         { label: FL.selectedClips().some((x) => x.link) ? 'Unlink' : FL.selectedClips().length > 1 ? 'Link' : (FL.hasAudio(clip) && clip.type === 'video' ? 'Unlink Audio' : null), key: '⌘L', act: () => FL.cmd('toggleLink') },
         { label: 'Scale to Frame Size', act: () => FL.cmd('fill'), disabled: !(clip.type === 'video' || clip.type === 'image') },
+        { sep: true },
+        { label: 'Nest…', act: () => FL.cmd('nest') },
+        ...(clip.type === 'nest' ? [{ label: 'Open Nested Sequence', act: () => FL.openSequence(clip.seqId), disabled: !FL.seqById(clip.seqId) }] : []),
+        ...(clip.multicam ? FL.vTracksOf(clip.seqId).map((t, k) => ({ label: `${k === (clip.angle || 0) ? '✓ ' : ''}Camera ${k + 1}`, key: String(k + 1), act: () => FL.setAngle(clip, k) })) : []),
+        ...(clip.type === 'video' ? [{ label: FL.isRamped(clip) ? 'Remove Speed Ramp' : 'Add Speed Ramp', act: () => FL.cmd(FL.isRamped(clip) ? 'clearRamp' : 'speedRamp') }] : []),
+        { label: 'Remove Silence…', act: () => FL.cmd('removeSilence'), disabled: !FL.hasAudio(clip) },
+        { label: 'Auto Reframe…', act: () => FL.cmd('reframeClip'), disabled: !(clip.type === 'video' || clip.type === 'image') },
+        { label: 'Save as Graphics Template…', act: () => FL.cmd('saveTemplate'), disabled: !['text', 'graphic', 'solid', 'image', 'adjust'].includes(clip.type) },
         { label: (clip.effects || []).some((x) => x.enabled) ? 'Disable Effects' : 'Enable Effects', act: () => FL.cmd('toggleFx'), disabled: !(clip.effects || []).length },
         { label: 'Reveal in Project', act: () => FL.cmd('revealMedia', clip.mediaId), disabled: !m },
         { sep: true },

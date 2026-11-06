@@ -14,7 +14,7 @@
   // num: shown value = prop × mul. Labels can be dragged to scrub (Shift = ×10, Option = fine).
   function num(label, key, o = {}) {
     const { min = -1e9, max = 1e9, step = 1, mul = 1, unit = '', dec = 0, slider = false } = o;
-    const kf = KFABLE.has(key);
+    const kf = o.kf ?? KFABLE.has(key);
     return `<div class="prop ${slider ? 'has-slider' : ''} ${kf ? 'kfable' : ''}" data-key="${key}" data-kind="num" data-min="${min}" data-max="${max}" data-step="${step}" data-mul="${mul}" data-dec="${dec}">
       ${kf ? `<button class="sw" data-sw="${key}" title="Toggle animation">${swIcon}</button>` : '<span class="sw-pad"></span>'}
       <label class="scrub" title="Drag to adjust">${label}</label>
@@ -60,7 +60,7 @@
     const v = ctx.v;
     const a = ctx.a;
     const m = FL.media(c.mediaId);
-    const typeLabel = pair ? 'Video + Audio (linked)' : { video: 'Video', audio: 'Audio', image: 'Still', text: 'Title', graphic: 'Graphic', adjust: 'Adjustment Layer', solid: 'Color Matte' }[c.type];
+    const typeLabel = pair ? 'Video + Audio (linked)' : c.multicam ? 'Multi-Camera' : { video: 'Video', audio: 'Audio', image: 'Still', text: 'Title', graphic: 'Graphic', adjust: 'Adjustment Layer', solid: 'Color Matte', nest: 'Nested Sequence' }[c.type];
     let html = `<div class="clip-card">
       <div class="clip-card-type ${pair ? 'linked' : c.type}">${typeLabel}</div>
       <div class="clip-card-name" title="${FL.esc(m ? m.path : '')}">${FL.esc(FL.clipName(c))}</div>
@@ -81,6 +81,14 @@
       }
       if (v.type === 'graphic') html += section('gfx', `Edit: ${FL.esc(D.GRAPHICS[v.template].name)}`, graphicFields(v));
       if (v.type === 'solid') html += section('matte', 'Color Matte', color('Color', 'color'));
+      if (v.type === 'nest') {
+        const inner = FL.seqById(v.seqId);
+        html += section('nest', v.multicam ? 'Multi-Camera' : 'Nested Sequence',
+          (inner ? `<p class="hint">${FL.esc(inner.name)} · ${inner.settings.width}×${inner.settings.height} · ${inner.settings.fps} fps</p>` : '<p class="hint">The nested sequence is missing.</p>') +
+          (v.multicam && inner ? `<div class="angle-row">${FL.vTracksOf(v.seqId).map((t, k) => `<button class="btn small ${k === (v.angle || 0) ? 'primary' : ''}" data-angle="${k}" title="Switch to camera ${k + 1} (${k + 1})">Cam ${k + 1}</button>`).join('')}</div>
+            <p class="hint">Press 1–9 to switch angles. While playing, each press cuts to that camera at the playhead.</p>` : '') +
+          `<div class="prop-actions"><button class="btn small" data-do="openNest">Open Sequence</button>${v.multicam ? '<button class="btn small ghost" data-do="multicamView">Multi-Camera View</button>' : ''}</div>`);
+      }
       if (v.type !== 'adjust') {
         html += section('motion', 'Motion',
           num('Position X', 'x', { unit: 'px' }) + num('Position Y', 'y', { unit: 'px' }) +
@@ -97,10 +105,13 @@
         num('Fade in', 'fadeIn', { min: 0, step: 0.1, unit: 's', dec: 2 }) + num('Fade out', 'fadeOut', { min: 0, step: 0.1, unit: 's', dec: 2 }));
       html += '</div>';
     }
+    const ramp = FL.isRamped(v || c);
     html += `<div data-t="b">${section('time', 'Time',
       num('Duration', 'duration', { min: 0.04, step: 0.1, unit: 's', dec: 2 }) +
-      (c.type === 'video' || c.type === 'audio' ? num('Speed', 'speed', { min: 10, max: 1000, step: 5, mul: 100, unit: '%' }) : '') +
-      (pair ? '<p class="hint">Applies to both the video and its linked audio.</p>' : ''))}</div>`;
+      (c.type === 'video' || c.type === 'audio' ? num('Speed', 'speed', { min: 10, max: 1000, step: 5, mul: 100, unit: '%', kf: (v || c).type === 'video' && !pair }) : '') +
+      ((v || c).type === 'video' && !pair ? `<div class="prop-actions">${ramp ? '<button class="btn small ghost" data-do="clearRamp">Remove Speed Ramp</button>' : '<button class="btn small" data-do="speedRamp">Add Speed Ramp</button>'}</div>
+        <p class="hint">${ramp ? 'Speed ramp: the stopwatch keyframes set the speed over time. The picture changes speed; this clip’s own sound is silent while ramped.' : 'Click the stopwatch next to Speed, or Add Speed Ramp, to change speed over time.'}</p>` : '') +
+      (pair ? '<p class="hint">Applies to both the video and its linked audio. To ramp the speed, Unlink first (⌘L) — ramps change the picture only.</p>' : ''))}</div>`;
     if (v) {
       html += effectSections(v, 'video');
       html += `<div class="add-fx"><button class="btn small" data-addfx="video">+ Video Effect</button><button class="btn small ghost" data-addfx="look">Lumetri Look ▾</button></div>`;
@@ -165,8 +176,16 @@
       let body = def.params.map((p) => {
         const key = `fx:${e.id}:${p.key}`;
         if (p.type === 'color') return color(p.label, key);
-        return num(p.label, key, { min: p.min, max: p.max, step: p.step, unit: p.unit, dec: p.step < 1 ? 1 : 0, slider: true });
+        if (p.type === 'file') {
+          const f = e.params[p.key];
+          const info = f && FL.R.lutInfo(f);
+          return `<div class="prop file-prop"><span class="sw-pad"></span><label>${p.label}</label>
+            <button class="btn small" data-fx-act="pick-lut" data-fx="${e.id}" title="${FL.esc(f || '')}">${f ? FL.esc(f.split(/[\\/]/).pop()) : 'Choose .cube…'}</button></div>
+            ${info && info.error ? `<p class="hint err">${FL.esc(info.error)}</p>` : ''}`;
+        }
+        return num(p.label, key, { min: p.min, max: p.max, step: p.step, unit: p.unit, dec: p.step < 1 ? 1 : 0, slider: true, kf: kind === 'video' && !!p.kf });
       }).join('');
+      if (e.type === 'lut') body += '<p class="hint">Works with 3D .cube files from Premiere, DaVinci Resolve, camera makers and LUT packs.</p>';
       if (def.exportOnly) body += '<p class="hint">Heard in the exported file (not in live preview).</p>';
       if (e.type === 'lumetri') body += `<div class="prop-actions"><button class="btn small ghost" data-fx-act="look" data-fx="${e.id}">Looks ▾</button></div>`;
       if (kind === 'video' && !def.noMask) {
@@ -180,8 +199,12 @@
             <div class="mask-head"><span>Mask (${e.mask.shape === 'ellipse' ? 'Ellipse' : 'Rectangle'})</span>
               <button class="btn small ${editing ? 'primary' : ''}" data-fx-act="mask-edit" data-fx="${e.id}" title="Drag the mask in the Program monitor">${editing ? 'Editing on monitor' : 'Move on monitor'}</button>
               <button class="mbtn" data-fx-act="mask-remove" data-fx="${e.id}" title="Remove mask">✕</button></div>
-            ${num('Center X', `mask:${e.id}:cx`, { min: -50, max: 150, mul: 100, unit: '%', step: 0.5, dec: 1 })}
-            ${num('Center Y', `mask:${e.id}:cy`, { min: -50, max: 150, mul: 100, unit: '%', step: 0.5, dec: 1 })}
+            ${c.type === 'video' ? `<div class="track-tools"><span class="hint">Track mask:</span>
+              <button class="btn small" data-fx-act="track-back" data-fx="${e.id}" title="Follow the masked area backward to the start of the clip">◀ Track</button>
+              <button class="btn small" data-fx-act="track-fwd" data-fx="${e.id}" title="Follow the masked area forward to the end of the clip">Track ▶</button>
+              ${FL.hasKf(c, `mask:${e.id}:cx`) ? `<button class="mbtn" data-fx-act="track-clear" data-fx="${e.id}" title="Remove mask path keyframes">✕</button>` : ''}</div>` : ''}
+            ${num('Center X', `mask:${e.id}:cx`, { min: -50, max: 150, mul: 100, unit: '%', step: 0.5, dec: 1, kf: true })}
+            ${num('Center Y', `mask:${e.id}:cy`, { min: -50, max: 150, mul: 100, unit: '%', step: 0.5, dec: 1, kf: true })}
             ${num('Width', `mask:${e.id}:w`, { min: 1, max: 200, mul: 100, unit: '%', step: 0.5, dec: 1 })}
             ${num('Height', `mask:${e.id}:h`, { min: 1, max: 200, mul: 100, unit: '%', step: 0.5, dec: 1 })}
             ${num('Feather', `mask:${e.id}:feather`, { min: 0, max: 300, unit: 'px' })}
@@ -260,16 +283,19 @@
   // ---------------------------------------------------------------- value access
   function findFx(c, id) { return (c.effects || []).find((e) => e.id === id); }
   function getVal(c, key) {
-    if (key.startsWith('fx:')) { const [, id, p] = key.split(':'); const e = findFx(c, id); return e ? e.params[p] : 0; }
-    if (key.startsWith('mask:')) { const [, id, p] = key.split(':'); const e = findFx(c, id); return e && e.mask ? e.mask[p] : 0; }
+    if (key.startsWith('fx:') || key.startsWith('mask:')) return FL.kfValue(c, key, FL.localTime(c));
     if (key.startsWith('g:')) return (c.g || {})[key.slice(2)];
     if (KFABLE.has(key)) return FL.kfValue(c, key, FL.localTime(c));
     return c[key];
   }
   function setVal(c, key, v) {
-    if (key.startsWith('fx:')) { const [, id, p] = key.split(':'); const e = findFx(c, id); if (e) e.params[p] = v; return; }
-    if (key.startsWith('mask:')) { const [, id, p] = key.split(':'); const e = findFx(c, id); if (e && e.mask) e.mask[p] = v; return; }
+    if (key.startsWith('fx:') || key.startsWith('mask:')) {
+      if (FL.hasKf(c, key)) FL.setKf(c, key, FL.localTime(c), v);
+      else D.setBase(c, key, v);
+      return;
+    }
     if (key.startsWith('g:')) { c.g = c.g || {}; c.g[key.slice(2)] = v; return; }
+    if (key === 'speed' && FL.hasKf(c, 'speed')) { FL.setKf(c, 'speed', FL.localTime(c), D.clampSpeed(v)); return; }
     if (key === 'speed') {
       const old = c.speed || 1;
       const sp = FL.clamp(v, 0.1, 10);
@@ -294,7 +320,7 @@
       if (kind === 'num') {
         const shown = +((v ?? 0) * +p.dataset.mul).toFixed(+p.dataset.dec);
         p.querySelectorAll('input').forEach((inp) => { if (document.activeElement !== inp) inp.value = shown; });
-        if (KFABLE.has(key)) {
+        if (p.classList.contains('kfable')) {
           const on = FL.hasKf(c, key);
           p.classList.toggle('animated', on);
           const dot = p.querySelector('.kfdot');
@@ -318,13 +344,14 @@
     const ids = list.map((c) => c.id);
     for (const c of list) {
       if (!FL.clip(c.id)) continue;
+      if (FL.isRamped(c)) c.duration = Math.max(FL.MIN_CLIP, Math.min(c.duration, FL.mediaLimit(c)));
       FL.overwrite(c.trackId, c.start, c.start + c.duration, ids);
       if (c.fadeIn + c.fadeOut > c.duration) { const k = c.duration / (c.fadeIn + c.fadeOut); c.fadeIn *= k; c.fadeOut *= k; }
     }
     FL.changed({ source: 'inspector' });
   }
   function live(key) {
-    if (['speed', 'duration', 'fadeIn', 'fadeOut', 'muted', 'text'].includes(key) || KFABLE.has(key)) FL.renderTimeline();
+    if (['speed', 'duration', 'fadeIn', 'fadeOut', 'muted', 'text'].includes(key) || KFABLE.has(key) || key.startsWith('fx:') || key.startsWith('mask:')) FL.renderTimeline();
     FL.requestDraw();
   }
 
@@ -360,8 +387,9 @@
     if (sw && c) {
       const prop = sw.dataset.sw;
       FL.pushUndo();
-      if (FL.hasKf(c, prop)) { c[prop] = FL.kfValue(c, prop, FL.localTime(c)); delete c.kf[prop]; }
-      else FL.setKf(c, prop, FL.localTime(c), c[prop] ?? 0);
+      if (FL.hasKf(c, prop)) { D.setBase(c, prop, FL.kfValue(c, prop, FL.localTime(c))); delete c.kf[prop]; }
+      else FL.setKf(c, prop, FL.localTime(c), D.baseValue(c, prop) ?? 0);
+      if (prop === 'speed') c.duration = Math.max(FL.MIN_CLIP, Math.min(c.duration, FL.mediaLimit(c)));
       FL.changed({ source: 'inspector' });
       return;
     }
@@ -386,8 +414,11 @@
     if (fxBtn) { const o = ownerOf(fxBtn.dataset.fx); if (o) fxAction(o, fxBtn.dataset.fxAct, fxBtn.dataset.fx, fxBtn); return; }
     const add = e.target.closest('[data-addfx]');
     if (add) { const k = add.dataset.addfx; const o = k === 'audio' || k === 'apreset' ? ctx.a : ctx.v; if (o) addFxMenu(o, k, add); return; }
+    const ang = e.target.closest('[data-angle]');
+    if (ang && ctx.v && ctx.v.multicam) { FL.setAngle(ctx.v, +ang.dataset.angle); return; }
     const btn = e.target.closest('[data-do],[data-toggle],[data-align]');
     if (!btn) return;
+    if (btn.dataset.do === 'openNest' && ctx.v && ctx.v.type === 'nest') { if (FL.seqById(ctx.v.seqId)) FL.openSequence(ctx.v.seqId); return; }
     if (mode !== 'clip') return FL.cmd(btn.dataset.do === 'deleteTransition' ? 'delete' : btn.dataset.do);
     const vc = ctx.v;
     if (btn.dataset.toggle && vc) { FL.pushUndo(); vc[btn.dataset.toggle] = !vc[btn.dataset.toggle]; return FL.changed(); }
@@ -415,6 +446,23 @@
       return FL.showMenu(r.left, r.bottom + 4, Object.keys(D.LOOKS).map((name) => ({ label: name, act: () => { FL.pushUndo(); Object.assign(e.params, D.LOOKS[name]); FL.changed(); } })));
     }
     if (act === 'mask-edit') { FL.maskEdit = FL.maskEdit && FL.maskEdit.fxId === id ? null : { clipId: c.id, fxId: id }; render(); FL.requestDraw(); return; }
+    if (act === 'pick-lut') {
+      window.api.pickLut().then((file) => {
+        if (!file) return;
+        FL.pushUndo();
+        e.params.file = file;
+        FL.R.loadLut(file);
+        FL.changed();
+      });
+      return;
+    }
+    if (act === 'track-fwd' || act === 'track-back') { FL.trackMask(c, e, act === 'track-back'); return; }
+    if (act === 'track-clear') {
+      FL.pushUndo();
+      for (const k of D.MASK_KF) { const prop = `mask:${e.id}:${k}`; if (FL.hasKf(c, prop)) { D.setBase(c, prop, FL.kfValue(c, prop, FL.localTime(c))); delete c.kf[prop]; } }
+      FL.changed();
+      return;
+    }
     FL.pushUndo();
     if (act === 'toggle') e.enabled = !e.enabled;
     if (act === 'remove') { list.splice(i, 1); if (FL.maskEdit && FL.maskEdit.fxId === id) FL.maskEdit = null; }
@@ -425,6 +473,7 @@
       FL.maskEdit = { clipId: c.id, fxId: id };
     }
     if (act === 'mask-remove') { e.mask = null; if (FL.maskEdit && FL.maskEdit.fxId === id) FL.maskEdit = null; }
+    FL.pruneKf(c);
     FL.changed();
   }
 

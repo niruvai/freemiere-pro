@@ -52,11 +52,21 @@
     const m = FL.media(el.dataset.id);
     FL.dnd.press(e, () => (m && !m.missing ? { kind: 'media', mediaId: m.id, range: null, part: 'both' } : null), m ? m.name : '');
   });
+  // ⌘-click adds to the selection, Shift-click selects a range (used by Create Multi-Camera Sequence)
+  let binAnchor = null;
   bin.addEventListener('click', (e) => {
     const el = e.target.closest('.media');
-    bin.querySelectorAll('.media.sel').forEach((n) => n.classList.remove('sel'));
-    if (el) el.classList.add('sel');
+    const all = [...bin.querySelectorAll('.media')];
+    if (el && (e.metaKey || e.ctrlKey)) { el.classList.toggle('sel'); binAnchor = el; return; }
+    if (el && e.shiftKey && binAnchor && all.includes(binAnchor)) {
+      const [a, b] = [all.indexOf(binAnchor), all.indexOf(el)].sort((x, y) => x - y);
+      all.forEach((n, i) => n.classList.toggle('sel', i >= a && i <= b));
+      return;
+    }
+    all.forEach((n) => n.classList.remove('sel'));
+    if (el) { el.classList.add('sel'); binAnchor = el; }
   });
+  FL.binSelection = () => [...bin.querySelectorAll('.media.sel')].map((n) => FL.media(n.dataset.id)).filter(Boolean);
   bin.addEventListener('dblclick', (e) => {
     const el = e.target.closest('.media');
     if (el) FL.openSource(FL.media(el.dataset.id));
@@ -66,7 +76,12 @@
     if (!el) return;
     e.preventDefault();
     const m = FL.media(el.dataset.id);
+    if (!el.classList.contains('sel')) { bin.querySelectorAll('.media.sel').forEach((n) => n.classList.remove('sel')); el.classList.add('sel'); binAnchor = el; }
+    const picked = FL.binSelection();
+    const cams = picked.filter((x) => x.type === 'video');
     FL.showMenu(e.clientX, e.clientY, [
+      ...(cams.length >= 2 ? [{ label: `Create Multi-Camera Sequence (${cams.length} cameras)…`, act: () => FL.cmd('multicam') }, { sep: true }] : []),
+      ...(m.missing ? [{ label: 'Link Media…', act: () => FL.cmd('linkMedia') }, { sep: true }] : []),
       { label: 'Open in Source Monitor', act: () => FL.openSource(m) },
       { label: 'Insert at Playhead', key: ',', act: () => FL.insertMedia(m, null, FL.time, null, 'insert') },
       { label: 'Overwrite at Playhead', key: '.', act: () => FL.insertMedia(m, null, FL.time) },
@@ -139,6 +154,8 @@
     FL.requestDraw();
   }
 
+  FL.ensureAssets = ensureAssets;
+  FL.saveProject = saveProject;
   FL.importPaths = async (paths) => {
     const out = [];
     let failed = 0;
@@ -198,8 +215,8 @@
     for (const c of hits) {
       if (which === 'prev') {
         const cut = t - c.start;
+        c.in = (c.in || 0) + FL.srcOffset(c, cut);
         FL.trimHeadKf(c, cut);
-        c.in = (c.in || 0) + cut * (c.speed || 1);
         c.duration -= cut;
         c.transIn = null;
         for (const o of seq().clips) if (o.trackId === c.trackId && o.id !== c.id && o.start >= c.start) o.start -= cut;
@@ -563,6 +580,7 @@
   for (const id of ['project', 'graphics', 'markers', 'source', 'program', 'timeline', 'meters']) cmds[`panel:${id}`] = () => FL.dock.show(id);
   for (const n of ['Editing', 'Effects', 'Assembly', 'Audio', 'Graphics', 'Classic']) cmds[`ws:${n}`] = () => FL.dock.workspace(n);
   FL.cmd = (name, arg) => { if (cmds[name]) cmds[name](arg); };
+  FL.addCmd = (name, fn) => { cmds[name] = fn; };
   api.onMenu((name) => FL.cmd(name));
 
   let lastClip = 0;
@@ -799,6 +817,7 @@
     if (!p) return false;
     FL.filePath = p;
     FL.setDirty(false);
+    api.autosaveClean();
     FL.toast('Project saved');
     return true;
   }
@@ -817,7 +836,11 @@
     FL.emit('select', null);
     FL.emit('time', 0);
     FL.setDirty(false);
-    FL.project.media.forEach((m) => ensureAssets(m));
+    api.autosaveClean();
+    // offline media: offer to relink once every file has been checked
+    Promise.all(FL.project.media.map((m) => ensureAssets(m))).then(() => {
+      if (FL.project.media.some((m) => m.missing) && FL.linkMedia) FL.linkMedia({ auto: true });
+    });
     setTimeout(() => FL.zoomFit(), 60);
     if (FL.home && FL.home.visible()) FL.home.hide();
   }
@@ -858,7 +881,7 @@
     if (FL.playing) FL.pause();
     $('#ex-seq').innerHTML = FL.project.sequences.map((s) => `<option value="${s.id}" ${s.id === FL.project.activeSeq ? 'selected' : ''}>${FL.esc(s.name)}</option>`).join('');
     fillExportOptions();
-    if (!exportPath) $('#ex-path').placeholder = `${FL.projectName()} - ${seq().name}.mp4`;
+    if (!exportPath) $('#ex-path').placeholder = `${FL.projectName()} - ${seq().name}${$('#ex-codec').value.startsWith('prores') ? '.mov' : '.mp4'}`;
     $('#export-form').hidden = false;
     $('#export-progress').hidden = true;
     $('#ex-start').hidden = false;
@@ -872,11 +895,49 @@
     const r = rangeOf(sq);
     const dur = r ? r.end - r.start : FL.duration(sq);
     const [w, h] = $('#ex-res').value.split('x').map(Number);
-    const mbps = { high: 0.12, standard: 0.075, draft: 0.04 }[$('#ex-quality').value] * (w * h * +$('#ex-fps').value) / 1e6;
-    const mb = ((mbps + 0.192) * dur) / 8;
-    $('#ex-summary').innerHTML = `<span>Duration <b>${FL.timecode(dur)}</b></span><span>Estimated size <b>~${mb < 1 ? mb.toFixed(1) : Math.round(mb)} MB</b></span>`;
+    const codec = $('#ex-codec').value;
+    const pixels = w * h * +$('#ex-fps').value;
+    let mbps = { high: 0.12, standard: 0.075, draft: 0.04 }[$('#ex-quality').value] * pixels / 1e6;
+    if (codec === 'hevc') mbps *= 0.6;
+    // ProRes 422 is ~147 Mb/s and HQ ~220 Mb/s at 1080p30
+    if (codec === 'prores') mbps = (147 * pixels) / (1920 * 1080 * 30);
+    if (codec === 'prores_hq') mbps = (220 * pixels) / (1920 * 1080 * 30);
+    const audio = codec.startsWith('prores') ? 1.536 : 0.192;
+    const mb = ((mbps + audio) * dur) / 8;
+    const size = mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb < 1 ? mb.toFixed(1) : Math.round(mb)} MB`;
+    const nests = sq.clips.filter((c) => c.type === 'nest').length;
+    $('#ex-summary').innerHTML = `<span>Duration <b>${FL.timecode(dur)}</b></span><span>Estimated size <b>~${size}</b></span>${nests ? `<span>Nested <b>${nests}</b> (rendered first)</span>` : ''}`;
+    updateEncoderUI();
   }
-  ['#ex-res', '#ex-fps', '#ex-quality', '#ex-range'].forEach((s) => $(s).addEventListener('change', updateSummary));
+  // Hardware encoding (VideoToolbox) is offered only when this FFmpeg has it.
+  let encoderInfo = null;
+  api.encoders().then((e) => { encoderInfo = e; updateEncoderUI(); }).catch(() => {});
+  function updateEncoderUI() {
+    const codec = $('#ex-codec').value;
+    const hwSel = $('#ex-hw');
+    const pro = codec.startsWith('prores');
+    const hwOk = encoderInfo && (codec === 'hevc' ? encoderInfo.hevc_videotoolbox : encoderInfo.h264_videotoolbox);
+    hwSel.disabled = pro || !hwOk;
+    if (hwSel.disabled) hwSel.value = '0';
+    $('#ex-quality').disabled = pro;
+    let note = '';
+    if (pro) note = 'ProRes is an editing format: large files, top quality.';
+    else if (!encoderInfo) note = '';
+    else if (!hwOk) note = 'Hardware encoding isn’t available in this FFmpeg build, so software encoding is used.';
+    else if (hwSel.value === '1') note = 'Uses the Mac’s media engine: several times faster.';
+    $('#ex-hw-note').textContent = note;
+    // the file extension follows the format
+    const ext = pro ? '.mov' : '.mp4';
+    const fix = (v) => (v ? v.replace(/\.(mp4|mov|m4v)$/i, ext) : v);
+    if (exportPath) { exportPath = fix(exportPath); $('#ex-path').value = exportPath; }
+    $('#ex-path').placeholder = fix($('#ex-path').placeholder);
+    try { localStorage.setItem('fl-export', JSON.stringify({ codec, hw: hwSel.value })); } catch (_) {}
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem('fl-export') || 'null');
+    if (saved) { $('#ex-codec').value = saved.codec || 'h264'; $('#ex-hw').value = saved.hw || '1'; }
+  } catch (_) {}
+  ['#ex-res', '#ex-fps', '#ex-quality', '#ex-range', '#ex-codec', '#ex-hw'].forEach((s) => $(s).addEventListener('change', updateSummary));
   $('#ex-seq').addEventListener('change', fillExportOptions);
   async function browse() {
     const name = $('#ex-path').value || $('#ex-path').placeholder;
@@ -914,11 +975,19 @@
     if (missing.length) return FL.toast(`Media offline: ${missing[0].name}`);
     const [w, h] = $('#ex-res').value.split('x').map(Number);
 
-    // assets are drawn in the context of the exported sequence
-    const prevActive = FL.project.activeSeq;
-    FL.project.activeSeq = sq.id;
-    let assets;
-    try { assets = FL.R.exportAssets(sq); } finally { FL.project.activeSeq = prevActive; }
+    // assets are drawn in the context of each sequence they belong to (nested ones too)
+    const assets = { images: {}, meta: {} };
+    const visit = (s, seen) => {
+      if (!s || seen.has(s.id)) return;
+      seen.add(s.id);
+      const a = FL.withSeq(s.id, () => FL.R.exportAssets(s));
+      Object.assign(assets.images, a.images);
+      Object.assign(assets.meta, a.meta);
+      for (const c of s.clips) if (c.type === 'nest') visit(FL.seqById(c.seqId), seen);
+    };
+    visit(sq, new Set());
+    const missingNest = sq.clips.some((c) => c.type === 'nest' && !FL.seqById(c.seqId));
+    if (missingNest) FL.toast('A nested sequence is missing and will be left out');
 
     exporting = true;
     $('#export-form').hidden = true;
@@ -934,7 +1003,7 @@
     const result = await api.startExport({
       project: JSON.parse(JSON.stringify(FL.project)),
       seqId: sq.id,
-      options: { width: w, height: h, fps: +$('#ex-fps').value, quality: $('#ex-quality').value, range: rangeOf(sq) },
+      options: { width: w, height: h, fps: +$('#ex-fps').value, quality: $('#ex-quality').value, range: rangeOf(sq), codec: $('#ex-codec').value, hw: $('#ex-hw').value === '1' && !$('#ex-hw').disabled },
       images: assets.images,
       meta: assets.meta,
       outPath: exportPath,
@@ -946,7 +1015,7 @@
       $('#ex-bar').classList.add('done');
       $('#ex-pct').textContent = 'Done';
       $('#ex-eta').textContent = `${Math.round(result.seconds)}s`;
-      $('#ex-result').innerHTML = `<p class="ok">Saved to <b>${FL.esc(basename(result.path))}</b></p>`;
+      $('#ex-result').innerHTML = `<p class="ok">Saved to <b>${FL.esc(basename(result.path))}</b>${result.encoder ? `<br><span class="hint">${FL.esc(result.encoder)}</span>` : ''}</p>`;
       $('#ex-start').hidden = false;
       $('#ex-start').textContent = api.platform === 'darwin' ? 'Show in Finder' : 'Show File';
       $('#ex-start').dataset.mode = 'reveal';
@@ -959,9 +1028,9 @@
       $('#ex-result').innerHTML = `<pre class="err">${FL.esc(result.error)}</pre>`;
     }
   };
-  api.onExportProgress(({ pct, eta }) => {
+  api.onExportProgress(({ pct, eta, stage }) => {
     $('#ex-bar').style.width = (pct * 100).toFixed(1) + '%';
-    $('#ex-pct').textContent = `${Math.round(pct * 100)}%`;
+    $('#ex-pct').textContent = `${Math.round(pct * 100)}%${stage ? ' · ' + stage : ''}`;
     $('#ex-eta').textContent = eta != null ? `about ${eta > 90 ? Math.round(eta / 60) + ' min' : Math.max(1, Math.round(eta)) + ' s'} left` : '';
   });
 

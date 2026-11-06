@@ -8,8 +8,10 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { buildExportArgs } = require('./export');
+const { buildExportArgs, seqDuration } = require('./export');
 const updater = require('./updater');
+const analysis = require('./analysis');
+const files = require('./projectfiles');
 
 app.setName('Freemiere Pro');
 nativeTheme.themeSource = 'dark';
@@ -70,6 +72,23 @@ function findBinary(name) {
 }
 const FFMPEG = findBinary('ffmpeg');
 const FFPROBE = findBinary('ffprobe');
+analysis.setFfmpeg(FFMPEG);
+
+// Which encoders this FFmpeg build has (hardware VideoToolbox, x265, ProRes).
+let encoderList = null;
+async function encoders() {
+  if (encoderList) return encoderList;
+  let out = '';
+  try { out = await run(FFMPEG, ['-hide_banner', '-encoders']); } catch (_) { /* treat as none */ }
+  const has = (n) => new RegExp(`\\s${n}\\s`).test(out);
+  encoderList = {
+    h264_videotoolbox: has('h264_videotoolbox'),
+    hevc_videotoolbox: has('hevc_videotoolbox'),
+    libx265: has('libx265'),
+    prores_ks: has('prores_ks'),
+  };
+  return encoderList;
+}
 
 function run(bin, args, { onStdout, onStderr } = {}) {
   return new Promise((resolve, reject) => {
@@ -265,7 +284,7 @@ function createWindow() {
     if (pendingOpenFile) { openProjectFile(pendingOpenFile); pendingOpenFile = null; }
   });
   win.on('close', (e) => {
-    if (!dirty) return;
+    if (!dirty) { files.markClean(); return; }
     const choice = dialog.showMessageBoxSync(win, {
       type: 'warning',
       buttons: ['Quit Without Saving', 'Cancel'],
@@ -275,6 +294,15 @@ function createWindow() {
       detail: 'Your edits since the last save will be lost.',
     });
     if (choice === 1) e.preventDefault();
+    else files.markClean();
+  });
+  // If the editor itself crashes, reload it; the Home screen then offers the auto-saved copy.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit') return;
+    dialog.showMessageBox(win, {
+      type: 'error', buttons: ['Reload'], message: 'The editor stopped unexpectedly.',
+      detail: 'Freemiere Pro will reload. Your latest auto-save can be recovered from the Home screen.',
+    }).then(() => { if (win && !win.isDestroyed()) win.reload(); });
   });
   win.on('closed', () => { win = null; });
 
@@ -346,8 +374,10 @@ function buildMenu() {
         { label: 'Close Project', accelerator: 'Shift+CmdOrCtrl+W', click: cmd('closeProject') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: cmd('save') },
         { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: cmd('saveAs') },
+        { label: 'Open Auto-Saved Version…', click: cmd('autosaves') },
         { type: 'separator' },
         { label: 'Import…', accelerator: 'CmdOrCtrl+I', click: cmd('import') },
+        { label: 'Link Media…', click: cmd('linkMedia') },
         { label: 'Export Media…', accelerator: 'CmdOrCtrl+M', click: cmd('export') },
         { label: 'Export Frame…', accelerator: 'Shift+CmdOrCtrl+E', click: cmd('exportFrame') },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
@@ -386,6 +416,14 @@ function buildMenu() {
         { label: 'Linked Selection', click: cmd('toggleLinkSel') },
         { label: 'Enable / Disable Effects', accelerator: 'Shift+E', registerAccelerator: false, click: cmd('toggleFx') },
         { label: 'Scale to Frame Size', click: cmd('fill') },
+        { type: 'separator' },
+        { label: 'Nest…', click: cmd('nest') },
+        { label: 'Create Multi-Camera Sequence…', click: cmd('multicam') },
+        { type: 'separator' },
+        { label: 'Add Speed Ramp', click: cmd('speedRamp') },
+        { label: 'Remove Speed Ramp', click: cmd('clearRamp') },
+        { label: 'Remove Silence…', click: cmd('removeSilence') },
+        { label: 'Auto Reframe…', click: cmd('reframeClip') },
       ],
     },
     {
@@ -402,6 +440,7 @@ function buildMenu() {
         { label: 'Go to Previous Marker', ...show('Alt+Shift+M'), click: cmd('prevMarker') },
         { type: 'separator' },
         { label: 'Close Gaps', click: cmd('closeGaps') },
+        { label: 'Auto Reframe Sequence…', click: cmd('reframeSeq') },
         { type: 'separator' },
         { label: 'Snap in Timeline', ...show('S'), click: cmd('toggleSnap') },
         { label: 'Add Video Track', click: cmd('addVideoTrack') },
@@ -421,6 +460,10 @@ function buildMenu() {
         { label: 'Breaking News', click: cmd('gfx:breaking') },
         { label: 'Live Bug', click: cmd('gfx:live') },
         { label: 'Caption Box', click: cmd('gfx:caption') },
+        { type: 'separator' },
+        { label: 'Save Selection as Template…', click: cmd('saveTemplate') },
+        { label: 'Import Templates…', click: cmd('importTemplates') },
+        { label: 'Open Templates Folder', click: cmd('templatesFolder') },
       ],
     },
     {
@@ -448,6 +491,7 @@ function buildMenu() {
           ],
         },
         { label: 'Maximize / Restore Panel', accelerator: '`', registerAccelerator: false, click: cmd('maximize') },
+        { label: 'Multi-Camera View', accelerator: 'Shift+0', registerAccelerator: false, click: cmd('multicamView') },
         { type: 'separator' },
         { label: 'Project', accelerator: 'Shift+1', registerAccelerator: false, click: cmd('panel:project') },
         { label: 'Source Monitor', accelerator: 'Shift+2', registerAccelerator: false, click: cmd('panel:source') },
@@ -637,6 +681,76 @@ ipcMain.handle('export:pick', async (_e, defaultName) => {
 
 let exportChild = null;
 let exportCancelled = false;
+
+// Runs one FFmpeg export command, reporting progress (0–1 of this pass) through onPct.
+function runExport(args, total, onPct) {
+  return new Promise((resolve, reject) => {
+    exportChild = spawn(FFMPEG, args);
+    const child = exportChild;
+    let err = '';
+    let buf = '';
+    // FFmpeg reports progress every half second; if it goes silent for 3 minutes it is stuck
+    let lastOutput = Date.now();
+    let stalled = false;
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastOutput > 180000) { stalled = true; clearInterval(watchdog); try { child.kill('SIGKILL'); } catch (_) {} }
+    }, 5000);
+    child.on('close', () => clearInterval(watchdog));
+    exportChild.stdout.on('data', (d) => {
+      lastOutput = Date.now();
+      buf += d.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        const m = line.match(/^out_time_(?:us|ms)=(\d+)/);
+        if (m) onPct(Math.max(0, Math.min(1, Number(m[1]) / 1e6 / total)));
+      }
+    });
+    exportChild.stderr.on('data', (d) => { err += d; if (err.length > 200000) err = err.slice(-100000); });
+    exportChild.on('error', reject);
+    exportChild.on('close', (code) => {
+      exportChild = null;
+      if (exportCancelled) return reject(new Error('cancelled'));
+      if (stalled) return reject(new Error('FFmpeg stopped responding, so the export was stopped. Please try again; if it keeps happening, try another format or Software encoding.'));
+      if (code === 0) resolve();
+      else reject(new Error(err.split('\n').filter(Boolean).slice(-8).join('\n')));
+    });
+  });
+}
+
+// Nested sequences (and multi-camera angles) are rendered first to intermediate files, then
+// used like ordinary video clips. Innermost sequences render first.
+function planNests(project, seqId) {
+  const order = [];
+  const seen = new Set();
+  const byId = Object.fromEntries(project.sequences.map((s) => [s.id, s]));
+  const visit = (id, angle, stack) => {
+    const key = `${id}|${angle ?? ''}`;
+    if (seen.has(key) || stack.includes(id)) return;
+    const s = byId[id];
+    if (!s) return;
+    for (const c of s.clips) if (c.type === 'nest') visit(c.seqId, c.multicam ? c.angle || 0 : null, stack.concat(id));
+    seen.add(key);
+    order.push({ key, seqId: id, angle });
+  };
+  for (const c of (byId[seqId] || { clips: [] }).clips) if (c.type === 'nest') visit(c.seqId, c.multicam ? c.angle || 0 : null, [seqId]);
+  return order;
+}
+// Replaces nest clips in a sequence by video clips that play the rendered files.
+function substituteNests(project, seq, rendered) {
+  for (const c of seq.clips) {
+    if (c.type !== 'nest') continue;
+    const r = rendered[`${c.seqId}|${c.multicam ? c.angle || 0 : ''}`];
+    if (!r) continue;
+    c.type = 'video';
+    c.mediaId = r.media.id;
+    c.speed = 1;
+    if (c.kf) delete c.kf.speed;
+  }
+}
+
+ipcMain.handle('export:encoders', () => encoders());
+
 ipcMain.handle('export:start', async (_e, job) => {
   const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'freemiere-export-'));
   const images = {};
@@ -646,50 +760,73 @@ ipcMain.handle('export:start', async (_e, job) => {
     fs.writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
     images[key] = file;
   }
+  const project = job.project;
   // projects made before channel counts were recorded: look them up now
-  for (const m of job.project.media || []) {
+  for (const m of project.media || []) {
     if (m.hasAudio && !m.channels) { try { m.channels = (await probe(m.path)).channels; } catch (_) { /* keep default */ } }
   }
-  let built;
-  try {
-    built = buildExportArgs(job.project, Object.assign({ seqId: job.seqId }, job.options), { images, meta: job.meta || {} }, job.outPath, tmp);
-  } catch (err) {
-    fs.rmSync(tmp, { recursive: true, force: true });
-    return { ok: false, error: 'Could not prepare export: ' + (err.message || err) };
+  // LUT files are copied under simple names so FFmpeg's filter syntax never trips over a path
+  const luts = {};
+  for (const s of project.sequences) for (const c of s.clips) for (const e of c.effects || []) {
+    const f = e.type === 'lut' && e.enabled && e.params && e.params.file;
+    if (f && !luts[f] && fs.existsSync(f)) { luts[f] = path.join(tmp, `lut${Object.keys(luts).length}.cube`); fs.copyFileSync(f, luts[f]); }
   }
-  const { args, total } = built;
+  const assets = { images, meta: job.meta || {}, luts };
+
+  // hardware encoding only when this FFmpeg has it
+  const enc = await encoders();
+  const opts = Object.assign({ seqId: job.seqId }, job.options);
+  if (opts.hw && !(opts.codec === 'hevc' ? enc.hevc_videotoolbox : enc.h264_videotoolbox)) opts.hw = false;
+  if (opts.codec === 'hevc' && !opts.hw && !enc.libx265) return { ok: false, error: 'This FFmpeg build has no HEVC encoder. Choose H.264 instead.' };
+
+  const plan = planNests(project, job.seqId);
+  const byId = Object.fromEntries(project.sequences.map((s) => [s.id, s]));
+  const durations = plan.map((p) => seqDuration(byId[p.seqId]));
+  const mainSeq = byId[job.seqId] || project.sequences[0];
+  const mainDur = opts.range && opts.range.end > opts.range.start ? opts.range.end - opts.range.start : seqDuration(mainSeq);
+  const grand = durations.reduce((a, b) => a + b, 0) + mainDur;
+  let doneSec = 0;
   exportCancelled = false;
   const started = Date.now();
+  const report = (passSec, pct, stage) => {
+    const all = (doneSec + passSec * pct) / grand;
+    const elapsed = (Date.now() - started) / 1000;
+    send('export:progress', { pct: all, eta: all > 0.02 ? (elapsed / all) * (1 - all) : null, stage });
+  };
+  let usedEncoder = '';
   try {
-    await new Promise((resolve, reject) => {
-      exportChild = spawn(FFMPEG, args);
-      let err = '';
-      let buf = '';
-      exportChild.stdout.on('data', (d) => {
-        buf += d.toString();
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          const m = line.match(/^out_time_(?:us|ms)=(\d+)/);
-          if (m) {
-            const sec = Number(m[1]) / 1e6;
-            const pct = Math.max(0, Math.min(1, sec / total));
-            const elapsed = (Date.now() - started) / 1000;
-            send('export:progress', { pct, eta: pct > 0.02 ? (elapsed / pct) * (1 - pct) : null });
-          }
-        }
-      });
-      exportChild.stderr.on('data', (d) => { err += d; if (err.length > 200000) err = err.slice(-100000); });
-      exportChild.on('error', reject);
-      exportChild.on('close', (code) => {
-        exportChild = null;
-        if (exportCancelled) return reject(new Error('cancelled'));
-        if (code === 0) resolve();
-        else reject(new Error(err.split('\n').filter(Boolean).slice(-8).join('\n')));
-      });
-    });
+    const rendered = {};
+    for (let i = 0; i < plan.length; i++) {
+      const p = plan[i];
+      const s = byId[p.seqId];
+      substituteNests(project, s, rendered);
+      const out = path.join(tmp, `nest-${i}.mov`);
+      const { args, total } = buildExportArgs(project, { seqId: s.id, angle: p.angle, codec: 'intermediate', fps: s.settings.fps, transparent: true }, assets, out, tmp);
+      const label = `Rendering ${p.angle != null ? `camera ${p.angle + 1} of ` : ''}“${s.name}”…`;
+      await runExport(args, total, (pct) => report(durations[i], pct, label));
+      doneSec += durations[i];
+      const id = `nestmedia_${i}`;
+      const media = { id, path: out, name: s.name, type: 'video', duration: total, width: s.settings.width, height: s.settings.height, fps: s.settings.fps, hasAudio: true, hasVideo: true, channels: 2 };
+      project.media.push(media);
+      rendered[p.key] = { media };
+    }
+    substituteNests(project, mainSeq, rendered);
+    const attempt = async (o) => {
+      const built = buildExportArgs(project, o, assets, job.outPath, tmp);
+      usedEncoder = built.encoder;
+      // FREEMIERE_DEBUG_EXPORT=folder keeps a copy of the FFmpeg command for bug reports
+      if (process.env.FREEMIERE_DEBUG_EXPORT) { try { fs.cpSync(tmp, path.join(process.env.FREEMIERE_DEBUG_EXPORT, path.basename(tmp)), { recursive: true }); fs.writeFileSync(path.join(process.env.FREEMIERE_DEBUG_EXPORT, path.basename(tmp), 'args.json'), JSON.stringify([FFMPEG, ...built.args])); } catch (_) {} }
+      await runExport(built.args, built.total, (pct) => report(mainDur, pct, null));
+    };
+    try { await attempt(opts); }
+    catch (err) {
+      // a hardware encoder that refuses this size/format: fall back to the software one
+      if (!opts.hw || exportCancelled) throw err;
+      send('export:progress', { pct: doneSec / grand, eta: null, stage: 'Hardware encoder unavailable — using software encoding…' });
+      await attempt(Object.assign({}, opts, { hw: false }));
+    }
     send('export:progress', { pct: 1, eta: 0 });
-    return { ok: true, path: job.outPath, seconds: (Date.now() - started) / 1000 };
+    return { ok: true, path: job.outPath, seconds: (Date.now() - started) / 1000, encoder: usedEncoder };
   } catch (err) {
     if (exportCancelled) { try { fs.unlinkSync(job.outPath); } catch (_) {} }
     return { ok: false, cancelled: exportCancelled, error: String(err.message || err) };
@@ -701,6 +838,64 @@ ipcMain.handle('export:cancel', () => {
   if (exportChild) { exportCancelled = true; exportChild.kill('SIGKILL'); }
 });
 
+// ---------- Analysis (silence, tracking, reframe, multicam sync) ----------
+const progress = (id) => (pct) => send('analysis:progress', { id, pct });
+ipcMain.handle('analysis:cancel', () => analysis.cancel());
+ipcMain.handle('analysis:silence', (_e, file, o) => analysis.detectSilence(file, o));
+ipcMain.handle('analysis:track', (_e, file, o) => analysis.trackBox(file, o, progress(o.id)));
+ipcMain.handle('analysis:subject', (_e, file, o) => analysis.findSubject(file, o, progress(o.id)));
+ipcMain.handle('analysis:sync', (_e, list, o) => analysis.syncByAudio(list, o || {}, progress((o || {}).id)));
+
+// ---------- LUTs ----------
+ipcMain.handle('lut:pick', async () => {
+  const res = await dialog.showOpenDialog(win, { title: 'Choose a LUT', properties: ['openFile'], filters: [{ name: 'Cube LUT', extensions: ['cube'] }] });
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0];
+});
+ipcMain.handle('lut:read', (_e, file) => files.readCube(file));
+
+// ---------- Auto-save & recovery ----------
+ipcMain.handle('autosave:write', (_e, data, o) => files.autosave(data, o));
+ipcMain.handle('autosave:clean', () => { files.markClean(); return true; });
+ipcMain.handle('autosave:pending', () => files.pendingRecovery());
+ipcMain.handle('autosave:list', () => files.listAutosaves());
+ipcMain.handle('autosave:read', (_e, file) => JSON.parse(fs.readFileSync(file, 'utf8')));
+ipcMain.handle('autosave:folder', () => shell.openPath(files.autosaveFolder()));
+
+// ---------- Relink ----------
+ipcMain.handle('relink:pick', async (_e, name) => {
+  const res = await dialog.showOpenDialog(win, { title: `Where is “${name}”?`, properties: ['openFile'], message: `Locate ${name}` });
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0];
+});
+ipcMain.handle('relink:pickFolder', async () => {
+  const res = await dialog.showOpenDialog(win, { title: 'Search this folder for the missing files', properties: ['openDirectory'] });
+  return res.canceled || !res.filePaths[0] ? null : res.filePaths[0];
+});
+ipcMain.handle('relink:search', (_e, folder, names) => files.searchFolder(folder, names));
+
+// ---------- Graphics templates ----------
+ipcMain.handle('tpl:list', () => files.listTemplates());
+ipcMain.handle('tpl:save', (_e, t) => files.saveTemplate(t));
+ipcMain.handle('tpl:delete', (_e, file) => files.deleteTemplate(file));
+ipcMain.handle('tpl:asset', (_e, dataUrl) => { const f = files.templateAsset(dataUrl); allowedMedia.add(f); return f; });
+ipcMain.handle('tpl:folder', () => shell.openPath(files.templatesDir()));
+ipcMain.handle('tpl:import', async () => {
+  const res = await dialog.showOpenDialog(win, { title: 'Import Graphics Templates', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Freemiere Pro Template', extensions: ['fpgfx'] }] });
+  if (res.canceled) return { added: 0, errors: [] };
+  const errors = [];
+  let added = 0;
+  for (const f of res.filePaths) { try { files.importTemplateFile(f); added++; } catch (err) { errors.push(String(err.message || err)); } }
+  return { added, errors };
+});
+ipcMain.handle('tpl:export', async (_e, t) => {
+  const res = await dialog.showSaveDialog(win, { title: 'Export Template', defaultPath: path.join(startDir('template', 'desktop'), `${String(t.name || 'Template').replace(/[\\/:*?"<>|]/g, '-')}.fpgfx`), filters: [{ name: 'Freemiere Pro Template', extensions: ['fpgfx'] }] });
+  if (res.canceled || !res.filePath) return null;
+  rememberDir('template', res.filePath);
+  const copy = Object.assign({}, t);
+  delete copy.path;
+  fs.writeFileSync(res.filePath, JSON.stringify(copy, null, 1));
+  return res.filePath;
+});
+
 // ---------- App lifecycle ----------
 app.on('open-file', (e, file) => {
   e.preventDefault();
@@ -709,6 +904,7 @@ app.on('open-file', (e, file) => {
 });
 
 app.whenReady().then(() => {
+  files.init(app.getPath('userData'));
   protocol.handle('flmedia', serveMedia);
   buildMenu();
   createSplash();
