@@ -35,6 +35,7 @@ keyframes and broadcast graphics, rendered to H.264 with FFmpeg.
 - [Publishing a release](#publishing-a-release)
 - [Project structure](#project-structure)
 - [Known limitations](#known-limitations)
+- [Contributing](#contributing)
 - [বাংলা নির্দেশিকা](#বাংলা-নির্দেশিকা)
 - [License](#license)
 
@@ -231,6 +232,10 @@ src/renderer/
 
 Found a bug or have an idea? [Open an issue](https://github.com/niruvai/freemiere-pro/issues).
 
+## Contributing
+
+Pull requests are welcome. Read the [contributing guide](CONTRIBUTING.md) first: it explains how to set up the project, what to test, and why only the maintainer changes the version number. For security problems, follow the [security policy](SECURITY.md) instead of opening a public issue.
+
 ## বাংলা নির্দেশিকা
 
 **ইনস্টল**
@@ -251,6 +256,9 @@ Found a bug or have an idea? [Open an issue](https://github.com/niruvai/freemier
 - **ফাঁকা জায়গা মোছা:** দুই ক্লিপের মাঝের ফাঁকা জায়গায় ক্লিক করে Delete চাপুন। অডিও সহ পরের ক্লিপগুলো সরে এসে ফাঁক বন্ধ হয়। সব ফাঁক একসাথে মুছতে **Sequence → Close Gaps**।
 - **স্কেল ও ঘোরানো:** Program মনিটরে ক্লিপের কোণার বা পাশের সাদা চৌকো টানলে ছোট-বড় হয়। কোণার একটু বাইরে থেকে টানলে ঘোরে। Shift চেপে রাখলে ধাপে ধাপে মাপ মেলে।
 - **ভিডিও-অডিও জোড়া:** ক্লিক করলে দুটোই সিলেক্ট হয়। ⌥-ক্লিকে শুধু একটা। ⌘L দিয়ে জোড়া খোলা বা লাগানো যায়।
+
+**অবদান রাখুন**
+কোড দিয়ে সাহায্য করতে চাইলে আগে [অবদান নির্দেশিকা](CONTRIBUTING.md#বাংলা) পড়ুন। নিরাপত্তার সমস্যা পাবলিক Issue-তে না লিখে [নিরাপত্তা নীতি](SECURITY.md) অনুসরণ করুন।
 
 ## License
 
