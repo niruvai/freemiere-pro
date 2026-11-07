@@ -209,7 +209,19 @@
       </label>
       <div class="row2">
         <label class="field"><span>Range</span><select id="ex-range"><option value="all">Entire Sequence</option><option value="inout">Sequence In/Out</option></select></label>
-        <label class="field"><span>Format</span><select disabled><option>H.264 (MP4) + AAC</option></select></label>
+        <label class="field"><span>Format</span><select id="ex-codec">
+          <option value="h264">H.264 (MP4) — plays everywhere</option>
+          <option value="hevc">HEVC / H.265 (MP4) — half the size</option>
+          <option value="prores">Apple ProRes 422 (MOV) — for further editing</option>
+          <option value="prores_hq">Apple ProRes 422 HQ (MOV)</option>
+        </select></label>
+      </div>
+      <div class="row2">
+        <label class="field"><span>Encoding</span><select id="ex-hw">
+          <option value="1">Hardware (Apple VideoToolbox) — fastest</option>
+          <option value="0">Software — best quality per MB</option>
+        </select></label>
+        <span class="field ex-hint" id="ex-hw-note"></span>
       </div>
       <div class="row2">
         <label class="field"><span>Frame size</span><select id="ex-res"></select></label>
@@ -254,6 +266,19 @@
   </div>
 </div>
 
+<!-- General-purpose dialog (Remove Silence, Auto Reframe, Multi-Camera, Link Media, templates…) -->
+<div class="modal-backdrop" id="gen-modal" hidden>
+  <div class="modal">
+    <div class="modal-head"><h2 id="gen-title"></h2><button class="x" id="gen-x">×</button></div>
+    <div class="modal-body" id="gen-body"></div>
+    <div class="modal-body" id="gen-progress" hidden>
+      <div class="progress"><div class="bar" id="gen-bar"></div></div>
+      <div class="progress-meta"><span id="gen-pct"></span><span id="gen-note"></span></div>
+    </div>
+    <div class="modal-foot"><span class="gen-foot-note" id="gen-foot"></span><button class="btn" id="gen-cancel">Cancel</button><button class="btn primary" id="gen-ok">OK</button></div>
+  </div>
+</div>
+
 <div id="context-menu" hidden></div>
 <div id="toast" hidden></div>
 <div id="drop-overlay" hidden><div>Drop to import</div></div>
@@ -269,6 +294,9 @@
 <script src="js/panels.js"></script>
 <script src="js/dock.js"></script>
 <script src="js/app.js"></script>
+<script src="js/features.js"></script>
+<script src="js/multicam.js"></script>
+<script src="js/templates.js"></script>
 <script src="js/home.js"></script>
 </body>
 </html>

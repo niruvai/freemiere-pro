@@ -338,5 +338,7 @@
     $('#h-welcome', home).textContent = user ? `Welcome to Freemiere Pro, ${user}` : 'Welcome to Freemiere Pro';
     if (s.showHome && !hasProject) FL.home.show();
     else hasProject = true;
+    // last session ended with unsaved changes (crash, power loss…): offer the auto-saved copy
+    if (s.showHome && FL.offerRecovery) FL.offerRecovery().then((ok) => { if (ok) FL.home.markProject(); }).catch(() => {});
   }).catch(() => { hasProject = true; });
 })();

@@ -932,3 +932,54 @@ body.home-open #app { visibility: hidden; }
 .pp-frame.portrait span { width: 56px; height: 100px; }
 .pp-frame.square span { width: 90px; height: 90px; }
 .pp-frame.auto span { width: 150px; height: 84px; border-style: dashed; }
+
+/* =====================================================================
+   2.5: nested sequences, multi-camera, templates, tracking, dialogs
+   ===================================================================== */
+.ic-nest { --i: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='5' width='18' height='14' rx='2'/><rect x='7' y='9' width='10' height='6' rx='1'/></svg>"); }
+.clip.nest { background: linear-gradient(180deg, #2f7d88, #23626b); }
+.clip.nest.multicam { background: linear-gradient(180deg, #3b6fb3, #2c548c); }
+.clip-label em.ramp { background: #ff8f3d; color: #2b1300; font-weight: 800; }
+
+/* general dialog */
+#gen-modal .modal-foot { align-items: center; }
+.gen-foot-note { margin-right: auto; color: var(--text-faint); font-size: 11px; max-width: 60%; }
+#gen-body p { margin: 0; line-height: 1.55; }
+#gen-body input[type=text] { width: 100%; }
+.pick-list { max-height: 320px; overflow: auto; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 8px; padding: 4px; background: var(--bg); }
+.pick-row { display: flex; justify-content: space-between; gap: 12px; text-align: left; padding: 7px 10px; border: none; border-radius: 6px; background: none; color: var(--text); }
+.pick-row em { font-style: normal; color: var(--text-faint); flex: none; }
+.pick-row:hover { background: var(--panel-3); }
+.pick-row.sel { background: var(--accent); }
+.pick-row.sel em { color: #fff; }
+.lm-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow: auto; }
+.lm-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; padding: 8px 10px; border-radius: 8px; background: var(--bg); }
+.lm-row > div { display: flex; flex-direction: column; min-width: 0; }
+.lm-row .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ok { color: #3ddc84; }
+.hint.err { color: var(--danger); }
+.ex-hint { justify-content: flex-end; color: var(--text-faint); font-size: 11px; line-height: 1.4; }
+.mc-cams { display: flex; flex-direction: column; gap: 4px; }
+.mc-cam { display: grid; grid-template-columns: 54px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; border-radius: 7px; background: var(--bg); }
+.mc-n { font-weight: 700; color: var(--accent); }
+
+/* effect controls */
+.file-prop .btn { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-tools { display: flex; align-items: center; gap: 6px; padding-left: 18px; flex-wrap: wrap; }
+.angle-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Multi-Camera view strip under the Program monitor */
+#mc-strip { display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; background: var(--panel); border-top: 1px solid var(--line); min-height: 82px; align-items: center; }
+#mc-strip[hidden] { display: none; }
+#mc-strip .hint { padding: 0 6px; }
+.mc-angle { position: relative; flex: none; height: 70px; padding: 0; border: 2px solid transparent; border-radius: 6px; overflow: hidden; background: #000; cursor: pointer; }
+.mc-angle canvas { height: 100%; width: auto; display: block; }
+.mc-angle span { position: absolute; left: 4px; top: 3px; font-size: 11px; font-weight: 800; color: #fff; background: rgba(0,0,0,.55); padding: 0 5px; border-radius: 4px; }
+.mc-angle:hover { border-color: var(--line-2); }
+.mc-angle.on { border-color: #ff4f4f; }
+
+/* templates */
+.tpl-section { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.tpl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tpl-tools { display: flex; gap: 4px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.gfx-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }

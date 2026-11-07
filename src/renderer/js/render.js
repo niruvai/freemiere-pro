@@ -302,6 +302,13 @@
     const { width: W, height: H } = FL.S();
     if (c.type === 'text') { const t = R.textImage(c); return { bw: t.width, bh: t.height }; }
     if (c.type === 'graphic' || c.type === 'solid' || c.type === 'adjust') return { bw: W, bh: H };
+    if (c.type === 'nest') {
+      const s = FL.seqById(c.seqId);
+      const iw = s ? s.settings.width : W;
+      const ih = s ? s.settings.height : H;
+      const fit = Math.min(W / iw, H / ih);
+      return { bw: Math.max(2, Math.round((iw * fit) / 2) * 2), bh: Math.max(2, Math.round((ih * fit) / 2) * 2) };
+    }
     const m = FL.media(c.mediaId);
     if (!m || !m.width) return { bw: W, bh: H };
     const fit = Math.min(W / m.width, H / m.height);
@@ -383,6 +390,23 @@
     }
     return c;
   };
+  // The mask shape on its own (white, feathered, centred) for masks that move over time.
+  R.maskStamp = (mask, w, h) => {
+    const mw = Math.max(2, mask.w * w);
+    const mh = Math.max(2, mask.h * h);
+    const pad = Math.ceil((mask.feather || 0) * 1.5) + 2;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(mw + pad * 2);
+    c.height = Math.ceil(mh + pad * 2);
+    const ctx = c.getContext('2d');
+    if (mask.feather > 0) ctx.filter = `blur(${mask.feather / 2}px)`;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    if (mask.shape === 'ellipse') ctx.ellipse(c.width / 2, c.height / 2, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+    else ctx.rect(c.width / 2 - mw / 2, c.height / 2 - mh / 2, mw, mh);
+    ctx.fill();
+    return { canvas: c };
+  };
   const maskCache = new Map();
   function cachedMask(mask, w, h, q) {
     const key = JSON.stringify([mask, Math.round(w * q), Math.round(h * q)]);
@@ -408,6 +432,99 @@
     if (!vigCache.has(key)) { if (vigCache.size > 30) vigCache.clear(); vigCache.set(key, R.vignetteCanvas(p, w, h, q)); }
     return vigCache.get(key);
   }
+
+  // ---------------------------------------------------------------- 3D LUTs (.cube) in WebGL
+  // The LUT is stored as a 2D texture of N slices (N*N × N) and sampled with manual
+  // interpolation between blue slices, so it runs in WebGL 1 everywhere.
+  const luts = new Map(); // path -> { size, data } | { pending } | { error }
+  R.lutInfo = (file) => luts.get(file);
+  R.loadLut = (file) => {
+    if (!file || luts.has(file)) return;
+    luts.set(file, { pending: true });
+    window.api.readLut(file).then((lut) => { luts.set(file, lut); glState && glState.tex.delete(file); FL.requestDraw && FL.requestDraw(); })
+      .catch((err) => { luts.set(file, { error: String(err.message || err) }); FL.toast && FL.toast(`Couldn't read LUT: ${String(err.message || err).slice(0, 80)}`); });
+  };
+  let glState = null;
+  function gl() {
+    if (glState) return glState;
+    const canvas = document.createElement('canvas');
+    const g = canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true });
+    if (!g) return null;
+    const vs = 'attribute vec2 p;varying vec2 v;void main(){v=vec2(p.x*0.5+0.5,0.5-p.y*0.5);gl_Position=vec4(p,0.,1.);}';
+    const fs = `precision highp float;varying vec2 v;uniform sampler2D img;uniform sampler2D lut;uniform float n;uniform float k;
+      vec3 look(vec3 c){float b=c.b*(n-1.);float b0=floor(b);float b1=min(b0+1.,n-1.);
+        vec2 rg=vec2(c.r*(n-1.)+0.5,c.g*(n-1.)+0.5);
+        vec3 x0=texture2D(lut,vec2((b0*n+rg.x)/(n*n),rg.y/n)).rgb;
+        vec3 x1=texture2D(lut,vec2((b1*n+rg.x)/(n*n),rg.y/n)).rgb;
+        return mix(x0,x1,b-b0);}
+      void main(){vec4 c=texture2D(img,v);vec3 un=c.a>0.?c.rgb:c.rgb;gl_FragColor=vec4(mix(un,look(clamp(un,0.,1.)),k),c.a);}`;
+    const sh = (type, src) => { const s = g.createShader(type); g.shaderSource(s, src); g.compileShader(s); return s; };
+    const prog = g.createProgram();
+    g.attachShader(prog, sh(g.VERTEX_SHADER, vs));
+    g.attachShader(prog, sh(g.FRAGMENT_SHADER, fs));
+    g.linkProgram(prog);
+    if (!g.getProgramParameter(prog, g.LINK_STATUS)) return null;
+    const buf = g.createBuffer();
+    g.bindBuffer(g.ARRAY_BUFFER, buf);
+    g.bufferData(g.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), g.STATIC_DRAW);
+    const loc = g.getAttribLocation(prog, 'p');
+    g.enableVertexAttribArray(loc);
+    g.vertexAttribPointer(loc, 2, g.FLOAT, false, 0, 0);
+    g.useProgram(prog);
+    g.pixelStorei(g.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    const imgTex = g.createTexture();
+    glState = { canvas, g, prog, imgTex, tex: new Map() };
+    return glState;
+  }
+  function texParams(g) {
+    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
+    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
+    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
+    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
+  }
+  R.applyLut = (src, file, k) => {
+    const lut = luts.get(file);
+    if (!lut) { R.loadLut(file); return null; }
+    if (!lut.data) return null;
+    const st = gl();
+    if (!st) return null;
+    const { g, canvas } = st;
+    const n = lut.size;
+    let lt = st.tex.get(file);
+    if (!lt) {
+      lt = g.createTexture();
+      g.bindTexture(g.TEXTURE_2D, lt);
+      texParams(g);
+      // .cube order: red changes fastest, then green, then blue → x = b*n + r, y = g
+      const px = new Uint8Array(n * n * n * 4);
+      for (let b = 0; b < n; b++) for (let gg = 0; gg < n; gg++) for (let r = 0; r < n; r++) {
+        const si = ((b * n + gg) * n + r) * 3;
+        const di = (gg * n * n + b * n + r) * 4;
+        px[di] = Math.round(FL.clamp(lut.data[si], 0, 1) * 255);
+        px[di + 1] = Math.round(FL.clamp(lut.data[si + 1], 0, 1) * 255);
+        px[di + 2] = Math.round(FL.clamp(lut.data[si + 2], 0, 1) * 255);
+        px[di + 3] = 255;
+      }
+      g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, n * n, n, 0, g.RGBA, g.UNSIGNED_BYTE, px);
+      st.tex.set(file, lt);
+    }
+    if (canvas.width !== src.width || canvas.height !== src.height) { canvas.width = src.width; canvas.height = src.height; }
+    g.viewport(0, 0, canvas.width, canvas.height);
+    g.activeTexture(g.TEXTURE0);
+    g.bindTexture(g.TEXTURE_2D, st.imgTex);
+    texParams(g);
+    try { g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, g.RGBA, g.UNSIGNED_BYTE, src); } catch (_) { return null; }
+    g.activeTexture(g.TEXTURE1);
+    g.bindTexture(g.TEXTURE_2D, lt);
+    g.uniform1i(g.getUniformLocation(st.prog, 'img'), 0);
+    g.uniform1i(g.getUniformLocation(st.prog, 'lut'), 1);
+    g.uniform1f(g.getUniformLocation(st.prog, 'n'), n);
+    g.uniform1f(g.getUniformLocation(st.prog, 'k'), FL.clamp(k, 0, 1));
+    g.clearColor(0, 0, 0, 0);
+    g.clear(g.COLOR_BUFFER_BIT);
+    g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
+    return canvas;
+  };
 
   // ---------------------------------------------------------------- effect pipeline (base space)
   function chromaKey(src, dst, p) {
@@ -469,6 +586,11 @@
       }
       case 'vignette': ctx.drawImage(src, 0, 0); ctx.drawImage(cachedVignette(p, w / q, h / q, q), 0, 0, w, h); break;
       case 'chromakey': ctx.restore(); chromaKey(src, dst, p); return;
+      case 'lut': {
+        const out = p.file ? R.applyLut(src, p.file, (p.intensity ?? 100) / 100) : null;
+        ctx.drawImage(out || src, 0, 0, w, h);
+        break;
+      }
       default: ctx.drawImage(src, 0, 0);
     }
     ctx.restore();
@@ -500,6 +622,11 @@
     return cur;
   };
 
+  // Enabled video effects with their (possibly animated) parameters and masks at local time u.
+  R.activeEffects = (c, u) => (c.effects || [])
+    .filter((e) => e.enabled && !FL.isAudioEffect(e.type) && window.FLDefs.VIDEO_EFFECTS[e.type])
+    .map((e) => window.FLDefs.effectAt(c, e, u));
+
   // ---------------------------------------------------------------- drawing a clip
   // ctx is in sequence coordinates (already scaled by q). `src` is the media element/image for media clips.
   R.drawClip = (ctx, c, u, src, q) => {
@@ -508,12 +635,12 @@
     const alpha = mo.o * FL.fadeFactor(c, c.start + u);
     if (alpha <= 0.001) return;
     const { bw, bh } = R.baseSize(c);
-    const fx = (c.effects || []).filter((e) => e.enabled && !FL.isAudioEffect(e.type));
+    const fx = R.activeEffects(c, u);
     let img = null;
     let needBase = fx.length > 0 || c.type === 'graphic' || c.type === 'solid';
 
     if (c.type === 'text') img = R.textImage(c);
-    else if (c.type === 'video' || c.type === 'image') {
+    else if (c.type === 'video' || c.type === 'image' || c.type === 'nest') {
       if (!src) return;
       if (c.type === 'video' && (src.readyState < 2 || !src.videoWidth)) return;
       if (c.type === 'image' && !(src.complete && src.naturalWidth)) return;
@@ -555,7 +682,7 @@
   R.drawAdjust = (canvas, ctx, c, u, q) => {
     const mo = R.motion(c, u);
     const alpha = mo.o * FL.fadeFactor(c, c.start + u);
-    const fx = (c.effects || []).filter((e) => e.enabled && !FL.isAudioEffect(e.type));
+    const fx = R.activeEffects(c, u);
     if (alpha <= 0.001 || !fx.length) return;
     const snap = R.canvas(`adj:${c.id}`, canvas.width, canvas.height);
     const sctx = snap.getContext('2d');
@@ -697,8 +824,15 @@
         }
       }
       for (const e of c.effects || []) {
-        if (!e.enabled || FL.isAudioEffect(e.type)) continue;
-        if (e.mask && !window.FLDefs.VIDEO_EFFECTS[e.type].noMask) images[`mask:${c.id}:${e.id}`] = R.maskCanvas(e.mask, bw, bh, 1, true).toDataURL('image/png');
+        if (!e.enabled || FL.isAudioEffect(e.type) || !window.FLDefs.VIDEO_EFFECTS[e.type]) continue;
+        if (e.mask && !window.FLDefs.VIDEO_EFFECTS[e.type].noMask) {
+          if (window.FLDefs.maskAnimated(c, e)) {
+            // a moving (tracked) mask: the shape alone, moved per frame by the exporter
+            const st = R.maskStamp(e.mask, bw, bh);
+            images[`mstamp:${c.id}:${e.id}`] = st.canvas.toDataURL('image/png');
+            meta[c.id][`mstamp:${e.id}`] = { w: st.canvas.width, h: st.canvas.height };
+          } else images[`mask:${c.id}:${e.id}`] = R.maskCanvas(e.mask, bw, bh, 1, true).toDataURL('image/png');
+        }
         if (e.type === 'vignette') images[`vig:${c.id}:${e.id}`] = R.vignetteCanvas(e.params, bw, bh, 1).toDataURL('image/png');
       }
     }

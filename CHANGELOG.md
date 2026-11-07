@@ -2,6 +2,27 @@
 
 All notable changes to Freemiere Pro are listed here. Versions follow [Semantic Versioning](https://semver.org).
 
+## [Unreleased] — 2.5.0
+
+### Added
+- **Remove Silence** (Clip → Remove Silence…): finds the pauses in talking clips and cuts them out — jump cuts in one step. Choose the loudness threshold, the shortest pause, how much air to keep around speech, and whether to close the gaps on all tracks (keeps graphics and music in sync), only on the clips' tracks, leave the gaps, or just add markers. With several mics, a pause is cut only when everyone is quiet.
+- **Hardware export (Apple VideoToolbox)**, several times faster, for H.264 and the new **HEVC / H.265** format. **Apple ProRes 422 and 422 HQ** (MOV) for handing work to other editors. Software encoding stays available; if the hardware encoder refuses a job, the export falls back to software automatically.
+- **Speed ramps (time remapping)**: animate Speed with keyframes in Effect Controls, or use Clip → Add Speed Ramp for a ready-made normal → slow motion → normal ramp. As in Premiere, a ramp changes the picture; the clip's own sound is silent while it is ramped (linked audio keeps playing at normal speed).
+- **Nested sequences**: Clip → Nest… turns the selected clips into one clip that holds a sequence; double-click it to edit inside. Any sequence can also be inserted into another (right-click its tab). Nests render first on export.
+- **Multi-camera editing**: select 2–9 camera clips in the Project panel (⌘-click) → Create Multi-Camera Sequence. Cameras are synchronized by their sound. Press 1–9 while playing to cut between cameras, or use Window → Multi-Camera View (⇧0) for live previews of every angle.
+- **LUT (Look File)** effect: apply any 3D .cube LUT with an intensity slider, in preview (GPU) and export.
+- **Keyframes for effect parameters**: Lumetri Color, Black & White, Gaussian Blur and LUT intensity can now be animated.
+- **Resize masks on the monitor**: while a mask is being edited, drag its yellow handles to make it bigger or smaller (Shift keeps the shape, Option resizes from the centre).
+- **Mask tracking**: in an effect's mask, **Track ▶ / ◀ Track** follows the masked area (a face, a number plate) through the clip and writes the mask path as keyframes.
+- **Auto Reframe**: Sequence → Auto Reframe Sequence… makes a 9:16, 1:1, 4:5 or 16:9 copy of a sequence; video is scaled to fill and panned to keep the subject (people, faces, movement) in view. Clip → Auto Reframe… does the same for selected clips.
+- **Auto-save and crash recovery**: an auto-saved copy is written every 90 seconds while there are unsaved changes (the newest 10 per project are kept). If Freemiere Pro closes unexpectedly, the Home screen offers to recover the work. File → Open Auto-Saved Version… lists every copy.
+- **Link Media**: when files have been moved or renamed, a dialog lists the offline media; locate one file and the others in the same folder are found automatically, or search a whole folder.
+- **Graphics templates (.fpgfx)**: select titles, news graphics, color mattes, logos and adjustment layers and choose Graphics → Save Selection as Template. Templates appear under My Templates in Essential Graphics, can be dragged into any sequence, and can be exported and shared as files (images travel inside).
+
+### Changed
+- Export dialog: new Format and Encoding choices; the file extension follows the format, and the size estimate covers each format.
+- Exports stop with a clear message if FFmpeg stops responding, instead of waiting forever.
+
 ## [2.4.0] — 2026-11-03
 
 ### Added

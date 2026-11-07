@@ -55,10 +55,13 @@
     return img;
   };
 
+  // Pool keys: clip id, prefixed with the ids of the nested-sequence clips it is shown through.
+  let prefix = '';
   function elementFor(clip, m) {
     const src = srcFor(m);
-    let entry = pool.get(clip.id);
-    if (entry && entry.src !== src) { release(clip.id); entry = null; }
+    const key = prefix + clip.id;
+    let entry = pool.get(key);
+    if (entry && entry.src !== src) { release(key); entry = null; }
     if (!entry) {
       const el = clip.type === 'audio' ? new Audio() : document.createElement('video');
       el.crossOrigin = 'anonymous';
@@ -69,7 +72,7 @@
       el.addEventListener('seeked', () => { needsDraw = true; });
       el.addEventListener('loadeddata', () => { needsDraw = true; });
       entry = { el, src, used: performance.now() };
-      pool.set(clip.id, entry);
+      pool.set(key, entry);
       trimPool();
     }
     entry.used = performance.now();
@@ -85,9 +88,15 @@
     pool.delete(id);
   }
   function trimPool() {
-    if (pool.size <= 16) return;
+    if (pool.size <= 24) return;
     const sorted = [...pool.entries()].sort((a, b) => a[1].used - b[1].used);
-    for (const [id] of sorted.slice(0, pool.size - 16)) release(id);
+    for (const [id] of sorted.slice(0, pool.size - 24)) release(id);
+  }
+  // Does a pool key still point at a clip somewhere in the project?
+  function keyAlive(key) {
+    const ids = key.split('/');
+    const last = ids[ids.length - 1];
+    return FL.project.sequences.some((s) => s.clips.some((c) => c.id === last));
   }
 
   // ---------------------------------------------------------------- transport
@@ -149,12 +158,35 @@
   };
 
   // ---------------------------------------------------------------- sync media elements
-  function sync(t) {
-    const active = new Set();
+  // ctx: { gain, pan, trackId, angle } inherited from the nested-sequence clips we are inside.
+  function syncSeq(t, active, ctx, depth) {
     const fps = FL.fps();
     const seq = FL.seq();
+    const angleTrack = ctx.angle != null ? FL.vTracks()[ctx.angle] : null;
     for (const clip of seq.clips) {
+      if (clip.type === 'nest') {
+        if (depth > 6) continue;
+        const local = t - clip.start;
+        if (local < -0.75 || local >= clip.duration) continue;
+        const inner = FL.seqById(clip.seqId);
+        if (!inner) continue;
+        const u = FL.clamp(local, 0, clip.duration);
+        const audible = !clip.muted && !clip.noAudio && local >= 0;
+        const lvl = audible ? (FL.kfValue(clip, 'volume', u) ?? 1) * FL.fadeFactor(clip, t) * FL.audioWeight(clip, t) : 0;
+        const prev = prefix;
+        prefix = prev + clip.id + '/';
+        FL.withSeq(inner.id, () => syncSeq((clip.in || 0) + local, active, {
+          gain: ctx.gain * lvl, pan: FL.clamp(ctx.pan + (FL.kfValue(clip, 'pan', u) || 0), -1, 1),
+          trackId: ctx.trackId || clip.trackId, angle: clip.multicam ? clip.angle || 0 : null,
+        }, depth + 1));
+        prefix = prev;
+        continue;
+      }
       if (clip.type !== 'video' && clip.type !== 'audio') continue;
+      // a multi-camera angle shows only its own video track (all audio tracks still play)
+      if (angleTrack && clip.type === 'video' && clip.trackId !== angleTrack.id) continue;
+      const tr = FL.track(clip.trackId);
+      if (depth > 0 && tr && (tr.muted || (tr.kind === 'video' && tr.hidden && !FL.hasAudio(clip)))) continue;
       const m = FL.media(clip.mediaId);
       if (!m || m.missing) continue;
       const ve = FL.vExt(clip);
@@ -164,29 +196,32 @@
       const local = t - clip.start;
       if (local < -head - 0.75 || local >= clip.duration + tail) continue;
       const el = elementFor(clip, m);
-      active.add(clip.id);
-      const speed = clip.speed || 1;
+      active.add(prefix + clip.id);
+      const ramp = FL.isRamped(clip);
+      const speed = D.speedAt(clip, FL.clamp(local, 0, clip.duration));
       const maxT = Math.max(0, (m.duration || 0) - 0.04);
-      const expected = FL.clamp((clip.in || 0) + local * speed, 0, maxT);
+      const expected = FL.clamp((clip.in || 0) + FL.srcOffset(clip, local), 0, maxT);
       const inside = local >= -head && local < clip.duration + tail;
 
-      const withSound = FL.hasAudio(clip);
+      // a speed ramp changes the picture only; its own embedded sound is silenced (unlink to keep it)
+      const withSound = FL.hasAudio(clip) && !ramp;
       if (withSound) {
-        FL.audio.attach(el, clip);
+        FL.audio.attach(el, ctx.trackId ? Object.assign({}, clip, { trackId: ctx.trackId }) : clip);
         const audible = FL.playing && local >= -ae.head && local < clip.duration + ae.tail && !clip.muted;
         const u = FL.clamp(local, 0, clip.duration);
-        const lvl = audible ? (FL.kfValue(clip, 'volume', u) ?? 1) * FL.fadeFactor(clip, t) * FL.audioWeight(clip, t) : 0;
-        FL.audio.set(el, lvl, FL.kfValue(clip, 'pan', u) || 0);
+        const lvl = audible ? ctx.gain * (FL.kfValue(clip, 'volume', u) ?? 1) * FL.fadeFactor(clip, t) * FL.audioWeight(clip, t) : 0;
+        FL.audio.set(el, lvl, FL.clamp(ctx.pan + (FL.kfValue(clip, 'pan', u) || 0), -1, 1));
       }
       el.muted = !withSound;
-      if (el.playbackRate !== speed) { try { el.playbackRate = speed; } catch (_) {} }
+      const rate = FL.clamp(speed, 0.0625, 16);
+      if (Math.abs(el.playbackRate - rate) > 1e-3) { try { el.playbackRate = rate; } catch (_) {} }
 
       const atEnd = expected >= maxT - 0.001 && local > 0;
       if (FL.playing && inside && !atEnd) {
         if (el.paused) {
           if (Math.abs(el.currentTime - expected) > 0.05) el.currentTime = expected;
           el.play().catch(() => {});
-        } else if (Math.abs(el.currentTime - expected) > 0.3) {
+        } else if (Math.abs(el.currentTime - expected) > (ramp ? 0.15 : 0.3)) {
           el.currentTime = expected;
         }
       } else {
@@ -194,20 +229,60 @@
         if (!el.seeking && Math.abs(el.currentTime - expected) > 0.5 / fps) el.currentTime = expected;
       }
     }
+  }
+  function sync(t) {
+    const active = new Set();
+    prefix = '';
+    syncSeq(t, active, { gain: 1, pan: 0, trackId: null, angle: null }, 0);
+    if (FL.multicamView) FL.multicamView.sync(t, active);
     for (const [id, entry] of pool) {
       if (active.has(id)) continue;
       if (!entry.el.paused) entry.el.pause();
-      if (!FL.clip(id)) release(id);
+      if (!keyAlive(id)) release(id);
     }
   }
+  FL.syncNested = (seqId, t, active, ctx, keyPrefix) => {
+    const prev = prefix;
+    prefix = keyPrefix;
+    try { FL.withSeq(seqId, () => syncSeq(t, active, Object.assign({ gain: 0, pan: 0, trackId: null, angle: null }, ctx), 1)); } finally { prefix = prev; }
+  };
 
   // ---------------------------------------------------------------- compositor
-  function sourceFor(c) {
-    if (c.type === 'video') { const e = pool.get(c.id); return e ? e.el : null; }
+  let composeDepth = 0;
+  function sourceFor(c, t, q) {
+    if (c.type === 'video') { const e = pool.get(prefix + c.id); return e ? e.el : null; }
     if (c.type === 'image') { const m = FL.media(c.mediaId); return m && !m.missing ? FL.imageFor(m) : null; }
+    if (c.type === 'nest') return nestFrame(c, t - c.start, q);
     return null;
   }
-  const drawSide = (c, t, q) => (x) => R.drawClip(x, c, t - c.start, sourceFor(c), q);
+  // Renders the nested sequence (or one multicam angle) at the clip's local time into a canvas.
+  function nestFrame(c, u, q) {
+    const inner = FL.seqById(c.seqId);
+    if (!inner || composeDepth > 6) return null;
+    const { width: W, height: H } = inner.settings;
+    const key = `nest:${prefix}${c.id}`;
+    const cv = R.canvas(key, W * q, H * q);
+    const prev = prefix;
+    prefix = prev + c.id + '/';
+    composeDepth++;
+    try {
+      FL.withSeq(inner.id, () => FL.compose(cv, cv.getContext('2d'), (c.in || 0) + FL.clamp(u, 0, c.duration), q, { angle: c.multicam ? c.angle || 0 : null, transparent: true }));
+    } finally { composeDepth--; prefix = prev; }
+    return cv;
+  }
+  FL.nestFrame = nestFrame;
+  FL.angleFrame = (seqId, angle, t, q, keyPrefix) => {
+    const inner = FL.seqById(seqId);
+    if (!inner) return null;
+    const cv = R.canvas(`angle:${keyPrefix}${angle}`, inner.settings.width * q, inner.settings.height * q);
+    const prev = prefix;
+    prefix = keyPrefix;
+    try { FL.withSeq(seqId, () => FL.compose(cv, cv.getContext('2d'), t, q, { angle })); } finally { prefix = prev; }
+    return cv;
+  };
+  // the source is resolved before drawing starts, so a nested sequence never renders into
+  // the shared transition canvases while they are in use
+  const drawSide = (c, t, q) => { const src = sourceFor(c, t, q); return (x) => R.drawClip(x, c, t - c.start, src, q); };
 
   // What a video track shows at time t: a clip, a transition, or nothing.
   FL.trackStateAt = (track, t) => {
@@ -236,18 +311,21 @@
   };
 
   const R = FL.R;
-  FL.compose = (targetCanvas, tctx, t, q) => {
-    const { width: W, height: H, bg } = FL.S();
+  // opts.angle: draw only that video track (multi-camera angle; 0 = V1)
+  // opts.transparent: no background colour (nested sequences let lower tracks show through)
+  FL.compose = (targetCanvas, tctx, t, q, opts = {}) => {
+    const { bg } = FL.S();
     tctx.setTransform(1, 0, 0, 1, 0, 0);
     tctx.globalAlpha = 1;
     tctx.filter = 'none';
     tctx.globalCompositeOperation = 'source-over';
-    tctx.fillStyle = bg || '#000';
-    tctx.fillRect(0, 0, targetCanvas.width, targetCanvas.height);
+    if (opts.transparent) tctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+    else { tctx.fillStyle = bg || '#000'; tctx.fillRect(0, 0, targetCanvas.width, targetCanvas.height); }
     tctx.setTransform(q, 0, 0, q, 0, 0);
-    const tracks = FL.seq().tracks.filter((tr) => tr.kind === 'video').reverse();
+    let tracks = FL.seq().tracks.filter((tr) => tr.kind === 'video').reverse();
+    if (opts.angle != null) tracks = tracks.filter((tr, i) => i === opts.angle);
     for (const tr of tracks) {
-      if (tr.hidden) continue;
+      if (tr.hidden && opts.angle == null) continue;
       const st = FL.trackStateAt(tr, t);
       if (!st) continue;
       if (st.kind === 'clip') {
@@ -298,7 +376,8 @@
     ctx.arc(0, 0, 4 / k / mo.s, 0, Math.PI * 2);
     ctx.stroke();
     // mask outline
-    const me = FL.maskEdit && FL.maskEdit.clipId === sel.id && (sel.effects || []).find((e) => e.id === FL.maskEdit.fxId);
+    const me0 = FL.maskEdit && FL.maskEdit.clipId === sel.id && (sel.effects || []).find((e) => e.id === FL.maskEdit.fxId);
+    const me = me0 && D.effectAt(sel, me0, u);
     if (me && me.mask) {
       const mk = me.mask;
       ctx.strokeStyle = '#ffd34d';
@@ -309,6 +388,20 @@
       if (mk.shape === 'ellipse') ctx.ellipse(cx, cy, (mk.w * bw) / 2, (mk.h * bh) / 2, 0, 0, Math.PI * 2);
       else ctx.rect(cx - (mk.w * bw) / 2, cy - (mk.h * bh) / 2, mk.w * bw, mk.h * bh);
       ctx.stroke();
+      // resize handles on the mask's box
+      const ms = 8 / k / mo.s;
+      ctx.setLineDash([3 / k / mo.s, 3 / k / mo.s]);
+      ctx.lineWidth = 1 / k / mo.s;
+      ctx.strokeRect(cx - (mk.w * bw) / 2, cy - (mk.h * bh) / 2, mk.w * bw, mk.h * bh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#ffd34d';
+      ctx.strokeStyle = '#000';
+      for (const [hx, hy] of HANDLES) {
+        const x = cx + (hx * mk.w * bw) / 2;
+        const y = cy + (hy * mk.h * bh) / 2;
+        ctx.fillRect(x - ms / 2, y - ms / 2, ms, ms);
+        ctx.strokeRect(x - ms / 2, y - ms / 2, ms, ms);
+      }
     }
     ctx.restore();
   }
@@ -396,6 +489,87 @@
     if (!hit(c, p)) for (const h of g.handles) if (h.hx && h.hy && d(h) <= 30 * p.k) return { kind: 'rotate', h, g };
     return null;
   }
+  // Mask resize handles (while a mask is being edited on the monitor).
+  function maskTarget() {
+    const c = visualSel();
+    if (!c || !FL.maskEdit || FL.maskEdit.clipId !== c.id || FL.isLocked(c)) return null;
+    if (FL.time < c.start || FL.time >= c.start + c.duration) return null;
+    const e = (c.effects || []).find((x) => x.id === FL.maskEdit.fxId && x.mask);
+    return e ? { c, e } : null;
+  }
+  function maskHandleAt(p) {
+    const t = maskTarget();
+    if (!t) return null;
+    const g = geometry(t.c);
+    const { bw, bh } = R.baseSize(t.c);
+    const mk = D.effectAt(t.c, t.e, g.u).mask;
+    const lx = (mk.cx - 0.5) * bw;
+    const ly = (mk.cy - 0.5) * bh;
+    const a = (g.mo.r * Math.PI) / 180;
+    for (const [hx, hy] of HANDLES) {
+      const x = lx + (hx * mk.w * bw) / 2;
+      const y = ly + (hy * mk.h * bh) / 2;
+      const px = g.cx + (x * Math.cos(a) - y * Math.sin(a)) * g.mo.s;
+      const py = g.cy + (x * Math.sin(a) + y * Math.cos(a)) * g.mo.s;
+      if (Math.hypot(px - p.x, py - p.y) <= 9 * p.k) return { kind: 'mask', h: { hx, hy, p: { x: px, y: py } }, g: Object.assign({}, g, { cx: g.cx + lx * g.mo.s, cy: g.cy + ly * g.mo.s }), t, bw, bh };
+    }
+    return null;
+  }
+  // Drags one side/corner; the opposite side stays put. Shift keeps the shape, Alt resizes from the centre.
+  function maskResize(e, hd) {
+    const { c, e: fx } = hd.t;
+    const { bw, bh, g } = hd;
+    const { hx, hy } = hd.h;
+    const u = g.u;
+    const m0 = D.effectAt(c, fx, u).mask;
+    const a = (-g.mo.r * Math.PI) / 180;
+    const { width: W, height: H } = FL.S();
+    const mo = R.motion(c, u);
+    const ox = W / 2 + mo.x;
+    const oy = H / 2 + mo.y;
+    const toLocal = (q) => {
+      const dx = q.x - ox; const dy = q.y - oy;
+      return { x: (dx * Math.cos(a) - dy * Math.sin(a)) / mo.s, y: (dx * Math.sin(a) + dy * Math.cos(a)) / mo.s };
+    };
+    const cx0 = (m0.cx - 0.5) * bw; const cy0 = (m0.cy - 0.5) * bh;
+    const hw0 = (m0.w * bw) / 2; const hh0 = (m0.h * bh) / 2;
+    const key = (k) => `mask:${fx.id}:${k}`;
+    let moved = false;
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* synthetic events */ }
+    const move = (ev) => {
+      if (!moved) { FL.pushUndo(); moved = true; }
+      const l = toLocal(toSeq(ev));
+      let cx = cx0; let cy = cy0; let hw = hw0; let hh = hh0;
+      if (hx) {
+        if (ev.altKey) hw = Math.abs(l.x - cx0);
+        else { const fixed = cx0 - hx * hw0; hw = Math.abs(l.x - fixed) / 2; cx = (l.x + fixed) / 2; }
+      }
+      if (hy) {
+        if (ev.altKey) hh = Math.abs(l.y - cy0);
+        else { const fixed = cy0 - hy * hh0; hh = Math.abs(l.y - fixed) / 2; cy = (l.y + fixed) / 2; }
+      }
+      if (ev.shiftKey && hx && hy) {
+        const k = Math.max(hw / hw0, hh / hh0);
+        hw = hw0 * k; hh = hh0 * k;
+        if (!ev.altKey) { cx = cx0 - hx * hw0 + hx * hw; cy = cy0 - hy * hh0 + hy * hh; }
+      }
+      hw = Math.max(2, hw); hh = Math.max(2, hh);
+      fx.mask.w = FL.clamp((hw * 2) / bw, 0.005, 2);
+      fx.mask.h = FL.clamp((hh * 2) / bh, 0.005, 2);
+      FL.setProp(c, key('cx'), FL.clamp(cx / bw + 0.5, -0.5, 1.5), u);
+      FL.setProp(c, key('cy'), FL.clamp(cy / bh + 0.5, -0.5, 1.5), u);
+      FL.toast(`Mask ${Math.round(fx.mask.w * 100)} × ${Math.round(fx.mask.h * 100)}%`, 700);
+      needsDraw = true;
+      FL.emit('inspector-refresh');
+    };
+    const up = () => {
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      if (moved) FL.changed({ source: 'monitor' });
+    };
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+  }
   const ROTATE_CURSOR = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M19 12a7 7 0 1 1-2.05-4.95' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/><path d='M19 12a7 7 0 1 1-2.05-4.95' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/><path d='M20 3v5h-5' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><path d='M20 3v5h-5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>") 12 12, crosshair`;
   function cursorFor(hd) {
     if (!hd) return '';
@@ -411,7 +585,7 @@
     if (e.buttons) return;
     const p = toSeq(e);
     const sel = visualSel();
-    const hd = handleAt(sel, p);
+    const hd = FL.maskEdit ? maskHandleAt(p) : handleAt(sel, p);
     canvas.style.cursor = hd ? cursorFor(hd) : sel && FL.isVisual(sel) && visibleAt(FL.time).includes(sel) && hit(sel, p) ? 'move' : '';
   });
 
@@ -458,6 +632,9 @@
       const sel = visualSel();
       const hd = handleAt(sel, p);
       if (hd) { transformDrag(e, sel, hd); return; }
+    } else {
+      const mh = maskHandleAt(p);
+      if (mh) { maskResize(e, mh); return; }
     }
     let target = visualSel();
     const vis = visibleAt(FL.time);
@@ -467,7 +644,8 @@
     if (FL.isLocked(target)) return;
     const u = FL.localTime(target);
     const fx = FL.maskEdit && FL.maskEdit.clipId === target.id && (target.effects || []).find((x) => x.id === FL.maskEdit.fxId && x.mask);
-    const startPos = fx ? { x: fx.mask.cx, y: fx.mask.cy } : { x: FL.kfValue(target, 'x', u) || 0, y: FL.kfValue(target, 'y', u) || 0 };
+    const mk = (k) => `mask:${fx.id}:${k}`;
+    const startPos = fx ? { x: FL.kfValue(target, mk('cx'), u), y: FL.kfValue(target, mk('cy'), u) } : { x: FL.kfValue(target, 'x', u) || 0, y: FL.kfValue(target, 'y', u) || 0 };
     let moved = false;
     canvas.setPointerCapture(e.pointerId);
     const move = (ev) => {
@@ -481,8 +659,8 @@
         const rot = (-mo.r * Math.PI) / 180;
         const lx = (dx * Math.cos(rot) - dy * Math.sin(rot)) / mo.s;
         const ly = (dx * Math.sin(rot) + dy * Math.cos(rot)) / mo.s;
-        fx.mask.cx = FL.clamp(startPos.x + lx / bw, -0.5, 1.5);
-        fx.mask.cy = FL.clamp(startPos.y + ly / bh, -0.5, 1.5);
+        FL.setProp(target, mk('cx'), FL.clamp(startPos.x + lx / bw, -0.5, 1.5), u);
+        FL.setProp(target, mk('cy'), FL.clamp(startPos.y + ly / bh, -0.5, 1.5), u);
       } else {
         let nx = startPos.x + dx;
         let ny = startPos.y + dy;
@@ -509,7 +687,7 @@
   // Sets a property, writing a keyframe when that property is animated.
   FL.setProp = (c, prop, v, u = FL.localTime(c)) => {
     if (FL.hasKf(c, prop)) FL.setKf(c, prop, u, v);
-    else c[prop] = v;
+    else D.setBase(c, prop, v);
   };
 
   FL.on('change', () => { needsDraw = true; });
