@@ -388,6 +388,20 @@
       if (mk.shape === 'ellipse') ctx.ellipse(cx, cy, (mk.w * bw) / 2, (mk.h * bh) / 2, 0, 0, Math.PI * 2);
       else ctx.rect(cx - (mk.w * bw) / 2, cy - (mk.h * bh) / 2, mk.w * bw, mk.h * bh);
       ctx.stroke();
+      // resize handles on the mask's box
+      const ms = 8 / k / mo.s;
+      ctx.setLineDash([3 / k / mo.s, 3 / k / mo.s]);
+      ctx.lineWidth = 1 / k / mo.s;
+      ctx.strokeRect(cx - (mk.w * bw) / 2, cy - (mk.h * bh) / 2, mk.w * bw, mk.h * bh);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#ffd34d';
+      ctx.strokeStyle = '#000';
+      for (const [hx, hy] of HANDLES) {
+        const x = cx + (hx * mk.w * bw) / 2;
+        const y = cy + (hy * mk.h * bh) / 2;
+        ctx.fillRect(x - ms / 2, y - ms / 2, ms, ms);
+        ctx.strokeRect(x - ms / 2, y - ms / 2, ms, ms);
+      }
     }
     ctx.restore();
   }
@@ -475,6 +489,87 @@
     if (!hit(c, p)) for (const h of g.handles) if (h.hx && h.hy && d(h) <= 30 * p.k) return { kind: 'rotate', h, g };
     return null;
   }
+  // Mask resize handles (while a mask is being edited on the monitor).
+  function maskTarget() {
+    const c = visualSel();
+    if (!c || !FL.maskEdit || FL.maskEdit.clipId !== c.id || FL.isLocked(c)) return null;
+    if (FL.time < c.start || FL.time >= c.start + c.duration) return null;
+    const e = (c.effects || []).find((x) => x.id === FL.maskEdit.fxId && x.mask);
+    return e ? { c, e } : null;
+  }
+  function maskHandleAt(p) {
+    const t = maskTarget();
+    if (!t) return null;
+    const g = geometry(t.c);
+    const { bw, bh } = R.baseSize(t.c);
+    const mk = D.effectAt(t.c, t.e, g.u).mask;
+    const lx = (mk.cx - 0.5) * bw;
+    const ly = (mk.cy - 0.5) * bh;
+    const a = (g.mo.r * Math.PI) / 180;
+    for (const [hx, hy] of HANDLES) {
+      const x = lx + (hx * mk.w * bw) / 2;
+      const y = ly + (hy * mk.h * bh) / 2;
+      const px = g.cx + (x * Math.cos(a) - y * Math.sin(a)) * g.mo.s;
+      const py = g.cy + (x * Math.sin(a) + y * Math.cos(a)) * g.mo.s;
+      if (Math.hypot(px - p.x, py - p.y) <= 9 * p.k) return { kind: 'mask', h: { hx, hy, p: { x: px, y: py } }, g: Object.assign({}, g, { cx: g.cx + lx * g.mo.s, cy: g.cy + ly * g.mo.s }), t, bw, bh };
+    }
+    return null;
+  }
+  // Drags one side/corner; the opposite side stays put. Shift keeps the shape, Alt resizes from the centre.
+  function maskResize(e, hd) {
+    const { c, e: fx } = hd.t;
+    const { bw, bh, g } = hd;
+    const { hx, hy } = hd.h;
+    const u = g.u;
+    const m0 = D.effectAt(c, fx, u).mask;
+    const a = (-g.mo.r * Math.PI) / 180;
+    const { width: W, height: H } = FL.S();
+    const mo = R.motion(c, u);
+    const ox = W / 2 + mo.x;
+    const oy = H / 2 + mo.y;
+    const toLocal = (q) => {
+      const dx = q.x - ox; const dy = q.y - oy;
+      return { x: (dx * Math.cos(a) - dy * Math.sin(a)) / mo.s, y: (dx * Math.sin(a) + dy * Math.cos(a)) / mo.s };
+    };
+    const cx0 = (m0.cx - 0.5) * bw; const cy0 = (m0.cy - 0.5) * bh;
+    const hw0 = (m0.w * bw) / 2; const hh0 = (m0.h * bh) / 2;
+    const key = (k) => `mask:${fx.id}:${k}`;
+    let moved = false;
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) { /* synthetic events */ }
+    const move = (ev) => {
+      if (!moved) { FL.pushUndo(); moved = true; }
+      const l = toLocal(toSeq(ev));
+      let cx = cx0; let cy = cy0; let hw = hw0; let hh = hh0;
+      if (hx) {
+        if (ev.altKey) hw = Math.abs(l.x - cx0);
+        else { const fixed = cx0 - hx * hw0; hw = Math.abs(l.x - fixed) / 2; cx = (l.x + fixed) / 2; }
+      }
+      if (hy) {
+        if (ev.altKey) hh = Math.abs(l.y - cy0);
+        else { const fixed = cy0 - hy * hh0; hh = Math.abs(l.y - fixed) / 2; cy = (l.y + fixed) / 2; }
+      }
+      if (ev.shiftKey && hx && hy) {
+        const k = Math.max(hw / hw0, hh / hh0);
+        hw = hw0 * k; hh = hh0 * k;
+        if (!ev.altKey) { cx = cx0 - hx * hw0 + hx * hw; cy = cy0 - hy * hh0 + hy * hh; }
+      }
+      hw = Math.max(2, hw); hh = Math.max(2, hh);
+      fx.mask.w = FL.clamp((hw * 2) / bw, 0.005, 2);
+      fx.mask.h = FL.clamp((hh * 2) / bh, 0.005, 2);
+      FL.setProp(c, key('cx'), FL.clamp(cx / bw + 0.5, -0.5, 1.5), u);
+      FL.setProp(c, key('cy'), FL.clamp(cy / bh + 0.5, -0.5, 1.5), u);
+      FL.toast(`Mask ${Math.round(fx.mask.w * 100)} × ${Math.round(fx.mask.h * 100)}%`, 700);
+      needsDraw = true;
+      FL.emit('inspector-refresh');
+    };
+    const up = () => {
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      if (moved) FL.changed({ source: 'monitor' });
+    };
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+  }
   const ROTATE_CURSOR = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M19 12a7 7 0 1 1-2.05-4.95' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/><path d='M19 12a7 7 0 1 1-2.05-4.95' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/><path d='M20 3v5h-5' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><path d='M20 3v5h-5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>") 12 12, crosshair`;
   function cursorFor(hd) {
     if (!hd) return '';
@@ -490,7 +585,7 @@
     if (e.buttons) return;
     const p = toSeq(e);
     const sel = visualSel();
-    const hd = handleAt(sel, p);
+    const hd = FL.maskEdit ? maskHandleAt(p) : handleAt(sel, p);
     canvas.style.cursor = hd ? cursorFor(hd) : sel && FL.isVisual(sel) && visibleAt(FL.time).includes(sel) && hit(sel, p) ? 'move' : '';
   });
 
@@ -537,6 +632,9 @@
       const sel = visualSel();
       const hd = handleAt(sel, p);
       if (hd) { transformDrag(e, sel, hd); return; }
+    } else {
+      const mh = maskHandleAt(p);
+      if (mh) { maskResize(e, mh); return; }
     }
     let target = visualSel();
     const vis = visibleAt(FL.time);

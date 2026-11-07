@@ -12,6 +12,7 @@ All notable changes to Freemiere Pro are listed here. Versions follow [Semantic 
 - **Multi-camera editing**: select 2–9 camera clips in the Project panel (⌘-click) → Create Multi-Camera Sequence. Cameras are synchronized by their sound. Press 1–9 while playing to cut between cameras, or use Window → Multi-Camera View (⇧0) for live previews of every angle.
 - **LUT (Look File)** effect: apply any 3D .cube LUT with an intensity slider, in preview (GPU) and export.
 - **Keyframes for effect parameters**: Lumetri Color, Black & White, Gaussian Blur and LUT intensity can now be animated.
+- **Resize masks on the monitor**: while a mask is being edited, drag its yellow handles to make it bigger or smaller (Shift keeps the shape, Option resizes from the centre).
 - **Mask tracking**: in an effect's mask, **Track ▶ / ◀ Track** follows the masked area (a face, a number plate) through the clip and writes the mask path as keyframes.
 - **Auto Reframe**: Sequence → Auto Reframe Sequence… makes a 9:16, 1:1, 4:5 or 16:9 copy of a sequence; video is scaled to fill and panned to keep the subject (people, faces, movement) in view. Clip → Auto Reframe… does the same for selected clips.
 - **Auto-save and crash recovery**: an auto-saved copy is written every 90 seconds while there are unsaved changes (the newest 10 per project are kept). If Freemiere Pro closes unexpectedly, the Home screen offers to recover the work. File → Open Auto-Saved Version… lists every copy.
