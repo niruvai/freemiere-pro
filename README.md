@@ -250,7 +250,7 @@ src/renderer/
 - DeNoise is heard in the exported file, not in live preview.
 - Long sequences with many transitions and effects take longer to export.
 
-Found a bug or have an idea? [Open an issue](https://github.com/niruvai/freemiere-pro/issues).
+Found a bug or have an idea? [Open an issue](https://github.com/niruvai/freemiere-pro/issues), or email [nirob@nirobislam.com](mailto:nirob@nirobislam.com).
 
 ## Contributing
 

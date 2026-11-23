@@ -514,6 +514,7 @@ function buildMenu() {
         { label: 'Check for Updates…', click: () => updater.check({ interactive: true }) },
         { label: 'Release Notes', click: () => shell.openExternal('https://github.com/niruvai/freemiere-pro/releases') },
         { label: 'Report a Problem', click: () => shell.openExternal('https://github.com/niruvai/freemiere-pro/issues') },
+        { label: 'Contact the Developer', click: () => shell.openExternal('mailto:nirob@nirobislam.com') },
       ],
     },
   ];
